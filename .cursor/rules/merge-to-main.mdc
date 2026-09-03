@@ -1,0 +1,13 @@
+---
+description: Automation and agent PRs must be merged to main
+alwaysApply: true
+---
+
+# Merge to main
+
+When you change this repo, merge the work into `main` before you finish.
+
+- Target pull requests at `main`.
+- Cursor `open_git_pr` often opens a **draft**. Drafts cannot be merged. Run `gh pr ready` (or the GitHub equivalent), then `gh pr merge`.
+- Do not leave the day's work only on a feature branch or a draft PR.
+- If `gh pr merge` is blocked, fast-forward `main` to the branch and `git push origin main`.
