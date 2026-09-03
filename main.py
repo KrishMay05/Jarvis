@@ -4,47 +4,47 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 from dotenv import load_dotenv
 
-from src.agent import Agent
-from src.orchestrator import AgentOrchestrator
-from src.tools.time_tool import TimeTool
-from src.tools.weather_tool import WeatherTool
-
-
-def build_orchestrator() -> AgentOrchestrator:
-    weather_agent = Agent(
-        Name="Weather Agent",
-        Description="Provides weather information for a given location",
-        Tools=[WeatherTool()],
-        Model="gemini-2.0-flash",
-    )
-    time_agent = Agent(
-        Name="Time Agent",
-        Description="Provides the current time for a given city",
-        Tools=[TimeTool()],
-        Model="gemini-2.0-flash",
-    )
-    return AgentOrchestrator([weather_agent, time_agent])
+from src.assistant import build_orchestrator
+from src.config import MissingAPIKeyError, describe_runtime, get_llm_settings
 
 
 def main() -> None:
     load_dotenv()
-    parser = argparse.ArgumentParser(description="Jarvis multi-agent assistant")
+    parser = argparse.ArgumentParser(description="Jarvis personal assistant")
     parser.add_argument(
         "--once",
         metavar="PROMPT",
         help="Run a single prompt and exit instead of starting the REPL",
     )
+    parser.add_argument(
+        "--status",
+        action="store_true",
+        help="Print the detected LLM provider and built-in tools, then exit",
+    )
     args = parser.parse_args()
 
-    orchestrator = build_orchestrator()
+    try:
+        settings = get_llm_settings()
+    except MissingAPIKeyError as exc:
+        print(exc, file=sys.stderr)
+        sys.exit(1)
+
+    if args.status:
+        print(describe_runtime(settings))
+        return
+
+    orchestrator = build_orchestrator(settings)
     if args.once:
         orchestrator.memory.append(f"User: {args.once}")
         print(orchestrator.handle_message(args.once))
         return
 
+    print(f"Jarvis online · {settings.summary()}")
+    print("Built-in tools need no extra keys. Type exit to leave.")
     orchestrator.run()
 
 

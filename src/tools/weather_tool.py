@@ -1,65 +1,72 @@
-"""Current weather lookup via OpenWeatherMap."""
+"""Current weather lookup via wttr.in — no extra API key required."""
 
 from __future__ import annotations
 
-import os
+from urllib.parse import quote
 
 import requests
 
+from src.config import USER_AGENT
 from src.tools.base_tool import Tool
 
 
 class WeatherTool(Tool):
-    def __init__(self, api_key: str | None = None, session: requests.Session | None = None):
-        self.api_key = api_key if api_key is not None else os.getenv("OPENWEATHER_API_KEY")
-        self.base_url = "https://api.openweathermap.org/data/2.5/weather"
+    def __init__(self, session: requests.Session | None = None):
         self.session = session or requests.Session()
+        self.session.headers["User-Agent"] = USER_AGENT
 
     def name(self) -> str:
         return "weather"
 
     def description(self) -> str:
-        return "Get the current weather for a location"
+        return "Get the current weather for a location. No extra API key needed."
 
     def use(self, args) -> str:
         location = _normalize_location(args)
         if not location:
             return "Please provide a location name as a string"
 
-        if not self.api_key:
-            return (
-                "Weather lookup is not configured. "
-                "Set OPENWEATHER_API_KEY in your environment or .env file."
-            )
-
-        params = {
-            "q": location,
-            "appid": self.api_key,
-            "units": "metric",
-        }
-
+        url = f"https://wttr.in/{quote(location)}?format=j1"
         try:
-            response = self.session.get(self.base_url, params=params, timeout=10)
+            response = self.session.get(url, timeout=10)
             response.raise_for_status()
             data = response.json()
         except requests.exceptions.RequestException as exc:
             return f"Error fetching weather data: {exc}"
+        except ValueError:
+            return f"Unexpected weather response for {location}."
 
         try:
-            temperature = data["main"]["temp"]
-            description = data["weather"][0]["description"]
-            humidity = data["main"]["humidity"]
-            wind_speed = data["wind"]["speed"]
+            current = data["current_condition"][0]
+            temperature = current["temp_C"]
+            description = current["weatherDesc"][0]["value"]
+            humidity = current["humidity"]
+            wind_speed = current.get("windspeedKmph", "?")
+            feels_like = current.get("FeelsLikeC")
         except (KeyError, IndexError, TypeError):
             return f"Unexpected weather response for {location}."
 
-        return (
-            f"Current weather in {location}:\n"
-            f"Temperature: {temperature}°C\n"
-            f"Description: {description}\n"
-            f"Humidity: {humidity}%\n"
-            f"Wind Speed: {wind_speed} m/s"
-        )
+        place = _place_label(data) or location
+        lines = [
+            f"Current weather in {place}:",
+            f"Temperature: {temperature}°C",
+            f"Description: {description}",
+            f"Humidity: {humidity}%",
+            f"Wind Speed: {wind_speed} km/h",
+        ]
+        if feels_like:
+            lines.insert(2, f"Feels like: {feels_like}°C")
+        return "\n".join(lines)
+
+
+def _place_label(data: dict) -> str | None:
+    try:
+        area = data["nearest_area"][0]
+        name = area["areaName"][0]["value"]
+        country = area["country"][0]["value"]
+        return f"{name}, {country}"
+    except (KeyError, IndexError, TypeError):
+        return None
 
 
 def _normalize_location(args) -> str | None:

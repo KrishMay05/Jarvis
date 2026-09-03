@@ -1,14 +1,10 @@
-"""Gemini client used by agents and the orchestrator."""
+"""Provider-agnostic LLM client used by agents and the orchestrator."""
 
 from __future__ import annotations
 
 import os
 
-from google import genai
-from google.genai import types
-
-_client: genai.Client | None = None
-_configured_key: str | None = None
+from src.config import LLMSettings, MissingAPIKeyError, get_llm_settings
 
 _SYSTEM_INSTRUCTION = (
     "You are a helpful AI assistant similar to Jarvis from Iron Man. "
@@ -18,27 +14,91 @@ _SYSTEM_INSTRUCTION = (
 )
 
 
-def _get_client() -> genai.Client:
-    global _client, _configured_key
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
+def query_llm(prompt: str, model: str | None = None) -> str:
+    """Send `prompt` to the configured provider and return the response text."""
+    settings = get_llm_settings()
+    chosen_model = model or settings.model
+    if os.getenv("JARVIS_DEBUG"):
+        print(f">>> [{settings.provider}/{chosen_model}] Prompt:\n{prompt}\n")
+
+    if settings.provider == "gemini":
+        text = _query_gemini(settings, prompt, chosen_model)
+    elif settings.provider == "openai":
+        text = _query_openai(settings, prompt, chosen_model)
+    elif settings.provider == "anthropic":
+        text = _query_anthropic(settings, prompt, chosen_model)
+    else:
+        raise RuntimeError(f"Unsupported LLM provider: {settings.provider}")
+
+    final_response = (text or "").strip()
+    if os.getenv("JARVIS_DEBUG"):
+        print(f"<<< Response:\n{final_response}\n")
+    return final_response
+
+
+def _query_gemini(settings: LLMSettings, prompt: str, model: str) -> str:
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError as exc:
         raise RuntimeError(
-            "GEMINI_API_KEY is not set. Copy .env.example to .env and add your key."
-        )
-    if _client is None or _configured_key != api_key:
-        _client = genai.Client(api_key=api_key)
-        _configured_key = api_key
-    return _client
+            "The google-genai package is required for Gemini. "
+            "Run: pip install -r requirements.txt"
+        ) from exc
 
-
-def query_llm(prompt: str, model: str = "gemini-2.0-flash") -> str:
-    """Send `prompt` to Google Gemini and return the response text."""
-    print(f">>> Prompt:\n{prompt}\n")
-    response = _get_client().models.generate_content(
+    client = genai.Client(api_key=settings.api_key)
+    response = client.models.generate_content(
         model=model,
         contents=prompt,
         config=types.GenerateContentConfig(system_instruction=_SYSTEM_INSTRUCTION),
     )
-    final_response = (response.text or "").strip()
-    print(f"<<< Response:\n{final_response}\n")
-    return final_response
+    return response.text or ""
+
+
+def _query_openai(settings: LLMSettings, prompt: str, model: str) -> str:
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError(
+            "The openai package is required for OpenAI. "
+            "Run: pip install -r requirements.txt"
+        ) from exc
+
+    client = OpenAI(api_key=settings.api_key)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _SYSTEM_INSTRUCTION},
+            {"role": "user", "content": prompt},
+        ],
+    )
+    message = response.choices[0].message
+    return message.content or ""
+
+
+def _query_anthropic(settings: LLMSettings, prompt: str, model: str) -> str:
+    try:
+        from anthropic import Anthropic
+    except ImportError as exc:
+        raise RuntimeError(
+            "The anthropic package is required for Anthropic. "
+            "Run: pip install -r requirements.txt"
+        ) from exc
+
+    client = Anthropic(api_key=settings.api_key)
+    response = client.messages.create(
+        model=model,
+        max_tokens=2048,
+        system=_SYSTEM_INSTRUCTION,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    parts: list[str] = []
+    for block in response.content:
+        text = getattr(block, "text", None)
+        if text:
+            parts.append(text)
+    return "".join(parts)
+
+
+# Re-export so callers can catch a missing key from either module.
+__all__ = ["query_llm", "MissingAPIKeyError"]
