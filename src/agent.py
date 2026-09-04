@@ -23,6 +23,9 @@ class Agent:
         self.memory = self.memory[-self.max_memory :]
         self.memory.append(f"User: {user_input}")
 
+        if not self.tools:
+            return self._reply_without_tools(user_input)
+
         context = "\n".join(self.memory)
         tool_descriptions = "\n".join(
             [f"- {tool.name()}: {tool.description()}" for tool in self.tools]
@@ -48,7 +51,11 @@ class Agent:
         response = query_llm(prompt, model=self.model)
         self.memory.append(f"Agent: {response}")
 
-        response_dict = self.json_parser(response)
+        try:
+            response_dict = self.json_parser(response)
+        except ValueError:
+            return {"action": "respond_to_user", "args": response}
+
         if not isinstance(response_dict, dict):
             return {"action": "respond_to_user", "args": str(response_dict)}
 
@@ -60,6 +67,24 @@ class Agent:
                 return tool.use(args)
 
         return response_dict
+
+    def _reply_without_tools(self, user_input: str):
+        """General chat: skip the tool JSON protocol and answer in plain text."""
+        context = "\n".join(self.memory)
+        prompt = f"""You are {self.name}: {self.description}
+
+Conversation:
+{context}
+
+Reply helpfully as Jarvis — confident, concise, and useful.
+Answer the user's latest message directly. Do not use JSON.
+If the message is a greeting, greet them back and offer to help.
+"""
+        reply = query_llm(prompt, model=self.model).strip() or (
+            "I'm here. How can I help?"
+        )
+        self.memory.append(f"Agent: {reply}")
+        return {"action": "respond_to_user", "args": reply}
 
 
 def _tool_names(tool: Tool) -> set[str]:

@@ -2,7 +2,7 @@
 
 A personal assistant you can run locally. Drop in **one AI API key** (Gemini, OpenAI, or Anthropic) and the built-in tools work — no weather key, no search key, no extra accounts.
 
-An orchestrator classifies intent, then specialist agents handle weather, local time, research, and any **MCP** servers you connect.
+An orchestrator classifies intent, then specialist agents handle weather, local time, research, general chat, and any **MCP** servers you connect.
 
 ## Setup
 
@@ -59,6 +59,7 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Capability | How |
 | --- | --- |
 | Chat / planning | Gemini, OpenAI, or Anthropic |
+| General conversation | Chat Agent (same key — greetings, writing, math, advice) |
 | Weather | [wttr.in](https://wttr.in) (no extra key) |
 | Time | Local timezone database |
 | Research | Wikipedia + DuckDuckGo Instant Answers (no extra key) |
@@ -95,11 +96,11 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 ## Project layout
 
 - `main.py` — CLI (`--once`, `--status`)
-- `src/assistant.py` — default weather, time, research, and optional MCP agents
+- `src/assistant.py` — default weather, time, research, chat, and optional MCP agents
 - `src/config.py` — one-key provider detection
 - `src/llm.py` — Gemini / OpenAI / Anthropic client
 - `src/mcp/` — stdio MCP client and `mcp.json` loader
-- `src/orchestrator.py` — routes a request to the right agent
+- `src/orchestrator.py` — routes a request, loops specialists, then answers
 - `src/tools/` — weather, time, research, MCP adapters
 - `tests/` — unit tests that do not need live API keys
 
@@ -108,8 +109,9 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 These are the next layers toward a drop-in assistant that also handles auth, automations, and computer use:
 
 1. ~~MCP client so third-party tools can be connected without new Python modules~~ (stdio `mcp.json` client)
-2. OAuth for mail / calendar instead of extra API keys
-3. Scheduled automations (reminders, recurring research)
-4. Computer use / browser control
-5. Persistent memory across sessions
-6. General chat agent so non-tool questions are not forced into weather/time/research
+2. ~~General chat agent so non-tool questions are not forced into weather/time/research~~
+3. ~~Multi-step orchestration so compound requests finish instead of stopping on the first tool result~~
+4. OAuth for mail / calendar instead of extra API keys
+5. Scheduled automations (reminders, recurring research)
+6. Computer use / browser control
+7. Persistent memory across sessions

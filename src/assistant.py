@@ -37,7 +37,18 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
         Tools=[ResearchTool()],
         Model=model,
     )
-    agents = [weather_agent, time_agent, research_agent]
+    chat_agent = Agent(
+        Name="Chat Agent",
+        Description=(
+            "General conversation, writing, math, coding help, brainstorming, "
+            "and questions that do not need weather, time, research, or MCP tools. "
+            "Default for greetings and open-ended chat. Uses the same AI key — "
+            "no extra accounts."
+        ),
+        Tools=[],
+        Model=model,
+    )
+    agents = [weather_agent, time_agent, research_agent, chat_agent]
     closables: list[McpManager] = []
 
     mcp = start_mcp_manager()

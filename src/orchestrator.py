@@ -7,6 +7,10 @@ from src.json_util import parse_llm_json
 from src.llm import query_llm
 from src.logger import log_message
 
+_EMPTY_FOLLOWUPS = frozenset(
+    {"", "none", "null", "n/a", "na", "respond_to_user", "-"}
+)
+
 
 class AgentOrchestrator:
     def __init__(
@@ -38,8 +42,8 @@ class AgentOrchestrator:
                 {context}
 
                 You are an expert intent classifier.
-                You need will use the context provided and the user's input to classify the intent select the appropriate agent.
-                You will rewrite the input for the agent so that the agent can efficiently execute the task.
+                Use the context and the user's input to select the appropriate agent.
+                Rewrite the input so that the agent can execute the task efficiently.
 
                 Here are the available agents and their descriptions:
                 {agent_catalog}
@@ -48,16 +52,25 @@ class AgentOrchestrator:
                 {user_input}
 
                 ###Guidelines###
-                - Sometimes you might have to use multiple agents to solve user's input. You have to do that in a loop.
-                - The original user input could have multiple tasks, you will use the context to understand the previous actions taken and the next steps you should take.
-                - Read the context, take your time to understand, see if there were many tasks and if you executed them all
-                - If there are no actions to be taken, then make the action "respond_to_user" with your final thoughts combining all previous responses as input.
-                - Respond with "respond_to_user" only when there are no agents to select from or there is no next_action
-                - You will return the agent name in the form of {response_format}
+                - Prefer a specialist (weather, time, research, MCP) when the user needs that capability.
+                - Use the Chat Agent for greetings, conversation, writing, math, coding help, advice, and anything that does not need a specialist.
+                - Compound requests may need several agents in a loop. Read the context for results already gathered.
+                - After specialist results are in context, either pick the next missing specialist or respond_to_user with a complete answer that uses those results.
+                - Do not select an agent whose result is already in context unless you still need a different query from it.
+                - If there are no further agents to run, make the action "respond_to_user" with a polished final answer as input.
+                - Return the agent name in the form of {response_format}
                 - Always return valid JSON like {response_format} and nothing else.
                 """
 
-        llm_response = self.json_parser(query_llm(prompt))
+        raw = query_llm(prompt)
+        try:
+            llm_response = self.json_parser(raw)
+        except ValueError:
+            return {
+                "action": "respond_to_user",
+                "input": raw.strip() or "I had trouble planning that request.",
+            }
+
         self.memory.append(f"Orchestrator: {llm_response}")
 
         if not isinstance(llm_response, dict):
@@ -73,8 +86,15 @@ class AgentOrchestrator:
         for agent in self.agents:
             if agent.name.lower() == action_name:
                 agent_response = agent.process_input(rewritten_input)
-                self.memory.append(f"Agent Response for Task: {agent_response}")
-                return agent_response
+                text, direct_reply = _result_text_and_direct(agent_response)
+                self.memory.append(f"{agent.name} result: {text}")
+                if direct_reply and not _has_followup(llm_response):
+                    return {"action": "respond_to_user", "input": text}
+                return {
+                    "action": "observation",
+                    "agent": agent.name,
+                    "input": text,
+                }
 
         return {
             "action": "respond_to_user",
@@ -82,15 +102,36 @@ class AgentOrchestrator:
         }
 
     def handle_message(self, user_input: str) -> str:
-        """Run the orchestrator until it produces a user-facing reply."""
+        """Run the orchestrator until it produces a user-facing reply.
+
+        Tool/agent observations continue the loop so compound requests
+        (weather + time, research then chat) can finish instead of
+        returning the first raw tool string.
+        """
         pending = user_input
+        observations: list[str] = []
         for _ in range(self.max_steps):
             response = self.orchestrate_task(pending)
-            if isinstance(response, dict) and response.get("action") == "respond_to_user":
+            if not isinstance(response, dict):
+                return str(response)
+
+            action = str(response.get("action") or "").strip().lower()
+            if action == "respond_to_user":
                 return str(response.get("input") or response.get("args") or "")
-            if isinstance(response, str):
-                return response
-            pending = str(response)
+            if action == "observation":
+                snippet = str(response.get("input") or "")
+                label = response.get("agent") or "Agent"
+                observations.append(f"{label}: {snippet}")
+                pending = (
+                    f"Original user request: {user_input}\n"
+                    "Agent results so far:\n"
+                    + "\n".join(observations)
+                    + "\nIf another agent is needed, select it. "
+                    "If the request is complete, respond_to_user with a helpful "
+                    "final answer that uses the agent results."
+                )
+                continue
+            return str(response.get("input") or response)
         return "I could not finish that request in the allowed number of steps."
 
     def run(self) -> None:
@@ -119,3 +160,21 @@ class AgentOrchestrator:
                 closer()
             except Exception:
                 pass
+
+
+def _has_followup(decision: dict) -> bool:
+    nxt = str(decision.get("next_action") or "").strip().lower()
+    return nxt not in _EMPTY_FOLLOWUPS
+
+
+def _result_text_and_direct(result) -> tuple[str, bool]:
+    """Normalize an agent return value to (text, is_direct_user_reply)."""
+    if isinstance(result, dict):
+        action = str(result.get("action") or "").strip().lower()
+        text = result.get("args")
+        if text in (None, ""):
+            text = result.get("input")
+        if text in (None, ""):
+            text = str(result)
+        return str(text), action == "respond_to_user"
+    return str(result), False
