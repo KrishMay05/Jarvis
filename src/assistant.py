@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from src.agent import Agent
 from src.config import LLMSettings, get_llm_settings
+from src.mcp.manager import McpManager, start_mcp_manager
 from src.orchestrator import AgentOrchestrator
 from src.tools.research_tool import ResearchTool
 from src.tools.time_tool import TimeTool
@@ -36,4 +37,21 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
         Tools=[ResearchTool()],
         Model=model,
     )
-    return AgentOrchestrator([weather_agent, time_agent, research_agent])
+    agents = [weather_agent, time_agent, research_agent]
+    closables: list[McpManager] = []
+
+    mcp = start_mcp_manager()
+    if mcp.tools:
+        agents.append(
+            Agent(
+                Name="MCP Agent",
+                Description=mcp.agent_description(),
+                Tools=mcp.tools,
+                Model=model,
+            )
+        )
+        closables.append(mcp)
+    else:
+        mcp.close()
+
+    return AgentOrchestrator(agents, closables=closables)

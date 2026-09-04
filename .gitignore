@@ -30,6 +30,9 @@ env/
 .coverage
 htmlcov/
 
+# Local MCP server config may contain third-party secrets
+mcp.json
+
 # Editors and OS
 .idea/
 .vscode/

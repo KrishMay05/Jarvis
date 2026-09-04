@@ -56,7 +56,15 @@ class Agent:
         args = response_dict.get("args", "")
 
         for tool in self.tools:
-            if tool.name().lower() == action:
+            if action in _tool_names(tool):
                 return tool.use(args)
 
         return response_dict
+
+
+def _tool_names(tool: Tool) -> set[str]:
+    names = {tool.name().lower()}
+    aliases = getattr(tool, "aliases", None)
+    if callable(aliases):
+        names.update(str(alias).lower() for alias in aliases() or ())
+    return names

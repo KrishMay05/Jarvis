@@ -9,11 +9,17 @@ from src.logger import log_message
 
 
 class AgentOrchestrator:
-    def __init__(self, agents: list[Agent], max_steps: int = 5):
+    def __init__(
+        self,
+        agents: list[Agent],
+        max_steps: int = 5,
+        closables: list | None = None,
+    ):
         self.agents = agents
         self.memory: list[str] = []
         self.max_memory = 10
         self.max_steps = max_steps
+        self._closables = list(closables or [])
 
     def json_parser(self, input_string: str):
         return parse_llm_json(input_string)
@@ -58,13 +64,14 @@ class AgentOrchestrator:
             return {"action": "respond_to_user", "input": str(llm_response)}
 
         action = llm_response.get("action", "")
+        action_name = str(action).strip().lower()
         rewritten_input = llm_response.get("input", user_input)
 
-        if action == "respond_to_user":
+        if action_name == "respond_to_user":
             return llm_response
 
         for agent in self.agents:
-            if agent.name == action:
+            if agent.name.lower() == action_name:
                 agent_response = agent.process_input(rewritten_input)
                 self.memory.append(f"Agent Response for Task: {agent_response}")
                 return agent_response
@@ -100,3 +107,15 @@ class AgentOrchestrator:
             log_message(f"Response from Agent: {response}", "RESPONSE")
             user_input = input("You: ")
             self.memory.append(f"User: {user_input}")
+
+    def close(self) -> None:
+        """Release long-lived resources such as MCP server processes."""
+        while self._closables:
+            resource = self._closables.pop()
+            closer = getattr(resource, "close", None)
+            if not callable(closer):
+                continue
+            try:
+                closer()
+            except Exception:
+                pass
