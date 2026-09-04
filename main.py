@@ -37,15 +37,21 @@ def main() -> None:
         print(describe_runtime(settings))
         return
 
-    orchestrator = build_orchestrator(settings)
-    if args.once:
-        orchestrator.memory.append(f"User: {args.once}")
-        print(orchestrator.handle_message(args.once))
-        return
+    orchestrator = None
+    try:
+        orchestrator = build_orchestrator(settings)
+        if args.once:
+            orchestrator.memory.append(f"User: {args.once}")
+            print(orchestrator.handle_message(args.once))
+            return
 
-    print(f"Jarvis online · {settings.summary()}")
-    print("Built-in tools need no extra keys. Type exit to leave.")
-    orchestrator.run()
+        print(f"Jarvis online · {settings.summary()}")
+        print("Built-in tools need no extra keys. MCP servers come from mcp.json.")
+        print("Type exit to leave.")
+        orchestrator.run()
+    finally:
+        if orchestrator is not None:
+            orchestrator.close()
 
 
 if __name__ == "__main__":
