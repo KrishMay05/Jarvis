@@ -46,7 +46,7 @@ def main() -> None:
             return
 
         print(f"Jarvis online · {settings.summary()}")
-        print("Built-in tools need no extra keys. MCP servers come from mcp.json.")
+        print("Built-in tools need no extra keys. Chat uses the same LLM. MCP servers come from mcp.json.")
         print("Type exit to leave.")
         orchestrator.run()
     finally:
