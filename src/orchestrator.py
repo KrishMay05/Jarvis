@@ -18,12 +18,14 @@ class AgentOrchestrator:
         agents: list[Agent],
         max_steps: int = 5,
         closables: list | None = None,
+        memory_store=None,
     ):
         self.agents = agents
         self.memory: list[str] = []
         self.max_memory = 10
         self.max_steps = max_steps
         self._closables = list(closables or [])
+        self.memory_store = memory_store
 
     def json_parser(self, input_string: str):
         return parse_llm_json(input_string)
@@ -31,6 +33,9 @@ class AgentOrchestrator:
     def orchestrate_task(self, user_input: str):
         self.memory = self.memory[-self.max_memory :]
         context = "\n".join(self.memory)
+        durable = ""
+        if self.memory_store is not None:
+            durable = self.memory_store.prompt_context()
         response_format = {"action": "", "input": "", "next_action": ""}
 
         agent_catalog = ", ".join(
@@ -40,6 +45,9 @@ class AgentOrchestrator:
                 Use the context from memory to plan next steps.
                 Context:
                 {context}
+
+                Durable memories (persist across sessions; apply them when relevant):
+                {durable or "(none yet)"}
 
                 You are an expert intent classifier.
                 Use the context and the user's input to select the appropriate agent.
@@ -52,7 +60,9 @@ class AgentOrchestrator:
                 {user_input}
 
                 ###Guidelines###
-                - Prefer a specialist (weather, time, research, MCP) when the user needs that capability.
+                - Prefer a specialist (weather, time, research, memory, MCP) when the user needs that capability.
+                - Use the Memory Agent to remember, forget, or recall lasting personal facts. Also use it when the user states a new lasting fact (name, home city, units, preferences).
+                - When the user omits a detail that a durable memory covers (for example home city), rewrite the specialist input with that detail.
                 - Use the Chat Agent for greetings, conversation, writing, math, coding help, advice, and anything that does not need a specialist.
                 - Compound requests may need several agents in a loop. Read the context for results already gathered.
                 - After specialist results are in context, either pick the next missing specialist or respond_to_user with a complete answer that uses those results.
@@ -110,14 +120,17 @@ class AgentOrchestrator:
         """
         pending = user_input
         observations: list[str] = []
+        reply = "I could not finish that request in the allowed number of steps."
         for _ in range(self.max_steps):
             response = self.orchestrate_task(pending)
             if not isinstance(response, dict):
-                return str(response)
+                reply = str(response)
+                break
 
             action = str(response.get("action") or "").strip().lower()
             if action == "respond_to_user":
-                return str(response.get("input") or response.get("args") or "")
+                reply = str(response.get("input") or response.get("args") or "")
+                break
             if action == "observation":
                 snippet = str(response.get("input") or "")
                 label = response.get("agent") or "Agent"
@@ -131,8 +144,14 @@ class AgentOrchestrator:
                     "final answer that uses the agent results."
                 )
                 continue
-            return str(response.get("input") or response)
-        return "I could not finish that request in the allowed number of steps."
+            reply = str(response.get("input") or response)
+            break
+        else:
+            reply = "I could not finish that request in the allowed number of steps."
+
+        if self.memory_store is not None:
+            self.memory_store.record_exchange(user_input, reply)
+        return reply
 
     def run(self) -> None:
         print("Jarvis: At your service. How can I help?")
