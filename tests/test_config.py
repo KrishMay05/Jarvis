@@ -97,5 +97,7 @@ def test_describe_runtime_mentions_one_key_tools(monkeypatch):
     assert "gemini" in text
     assert "wttr.in" in text
     assert "chat" in text.lower()
+    assert "memory" in text.lower()
     assert "none required" in text.lower()
     assert "MCP:" in text
+    assert "Memory:" in text

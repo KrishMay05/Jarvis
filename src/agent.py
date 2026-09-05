@@ -8,13 +8,21 @@ from src.tools.base_tool import Tool
 
 
 class Agent:
-    def __init__(self, Name: str, Description: str, Tools: list[Tool], Model: str):
+    def __init__(
+        self,
+        Name: str,
+        Description: str,
+        Tools: list[Tool],
+        Model: str,
+        memory_store=None,
+    ):
         self.memory: list[str] = []
         self.name = Name
         self.description = Description
         self.tools = Tools
         self.model = Model
         self.max_memory = 10
+        self.memory_store = memory_store
 
     def json_parser(self, input_string: str):
         return parse_llm_json(input_string)
@@ -27,6 +35,7 @@ class Agent:
             return self._reply_without_tools(user_input)
 
         context = "\n".join(self.memory)
+        durable = self._durable_context()
         tool_descriptions = "\n".join(
             [f"- {tool.name()}: {tool.description()}" for tool in self.tools]
         )
@@ -34,6 +43,7 @@ class Agent:
 
         prompt = f"""Context:
         {context}
+        {durable}
 
         Available tools:
         {tool_descriptions}
@@ -71,20 +81,32 @@ class Agent:
     def _reply_without_tools(self, user_input: str):
         """General chat: skip the tool JSON protocol and answer in plain text."""
         context = "\n".join(self.memory)
+        durable = self._durable_context()
         prompt = f"""You are {self.name}: {self.description}
 
 Conversation:
 {context}
+{durable}
 
 Reply helpfully as Jarvis — confident, concise, and useful.
 Answer the user's latest message directly. Do not use JSON.
 If the message is a greeting, greet them back and offer to help.
+Use durable memories when they are relevant (name, city, preferences).
 """
         reply = query_llm(prompt, model=self.model).strip() or (
             "I'm here. How can I help?"
         )
         self.memory.append(f"Agent: {reply}")
         return {"action": "respond_to_user", "args": reply}
+
+    def _durable_context(self) -> str:
+        store = self.memory_store
+        if store is None:
+            return ""
+        block = store.prompt_context()
+        if not block:
+            return ""
+        return f"\nDurable memories from previous sessions:\n{block}\n"
 
 
 def _tool_names(tool: Tool) -> set[str]:
