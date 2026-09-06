@@ -127,6 +127,7 @@ def test_orchestrator_prompt_includes_durable_facts(tmp_path, monkeypatch):
     assert seen
     assert "Home city is Austin" in seen[0]
     assert "Memory Agent" in seen[0]
+    assert "Automation Agent" in seen[0]
 
 
 def test_chat_agent_prompt_includes_durable_facts(tmp_path, monkeypatch):

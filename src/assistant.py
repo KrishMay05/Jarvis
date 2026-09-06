@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from src.agent import Agent
+from src.automation.store import AutomationStore
 from src.config import LLMSettings, get_llm_settings
 from src.mcp.manager import McpManager, start_mcp_manager
 from src.memory.store import MemoryStore
 from src.orchestrator import AgentOrchestrator
+from src.tools.automation_tool import AutomationTool
 from src.tools.memory_tool import MemoryTool
 from src.tools.research_tool import ResearchTool
 from src.tools.time_tool import TimeTool
@@ -18,6 +20,7 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
     settings = settings or get_llm_settings()
     model = settings.model
     memory = MemoryStore()
+    automations = AutomationStore()
 
     weather_agent = Agent(
         Name="Weather Agent",
@@ -55,19 +58,38 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
         Model=model,
         memory_store=memory,
     )
+    automation_agent = Agent(
+        Name="Automation Agent",
+        Description=(
+            "Schedules, lists, pauses, and cancels local reminders and "
+            "recurring Jarvis prompts (research, weather checks). Use when "
+            "the user says remind me, every morning, daily, or mentions "
+            "automations. Local file only — no extra API key or cron account."
+        ),
+        Tools=[AutomationTool(automations)],
+        Model=model,
+        memory_store=memory,
+    )
     chat_agent = Agent(
         Name="Chat Agent",
         Description=(
             "General conversation, writing, math, coding help, brainstorming, "
             "and questions that do not need weather, time, research, memory, "
-            "or MCP tools. Default for greetings and open-ended chat. Uses "
-            "the same AI key — no extra accounts."
+            "automations, or MCP tools. Default for greetings and open-ended "
+            "chat. Uses the same AI key — no extra accounts."
         ),
         Tools=[],
         Model=model,
         memory_store=memory,
     )
-    agents = [weather_agent, time_agent, research_agent, memory_agent, chat_agent]
+    agents = [
+        weather_agent,
+        time_agent,
+        research_agent,
+        memory_agent,
+        automation_agent,
+        chat_agent,
+    ]
     closables: list[McpManager] = []
 
     mcp = start_mcp_manager()
@@ -85,4 +107,9 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
     else:
         mcp.close()
 
-    return AgentOrchestrator(agents, closables=closables, memory_store=memory)
+    return AgentOrchestrator(
+        agents,
+        closables=closables,
+        memory_store=memory,
+        automation_store=automations,
+    )
