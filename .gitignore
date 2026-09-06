@@ -33,8 +33,9 @@ htmlcov/
 # Local MCP server config may contain third-party secrets
 mcp.json
 
-# Local assistant state (persistent memory)
+# Local assistant state (persistent memory and automations)
 memory.json
+automations.json
 .jarvis/
 
 # Editors and OS

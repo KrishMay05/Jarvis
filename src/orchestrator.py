@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from src.agent import Agent
+from src.automation.runner import run_due_jobs
 from src.json_util import parse_llm_json
 from src.llm import query_llm
 from src.logger import log_message
@@ -19,6 +20,7 @@ class AgentOrchestrator:
         max_steps: int = 5,
         closables: list | None = None,
         memory_store=None,
+        automation_store=None,
     ):
         self.agents = agents
         self.memory: list[str] = []
@@ -26,6 +28,7 @@ class AgentOrchestrator:
         self.max_steps = max_steps
         self._closables = list(closables or [])
         self.memory_store = memory_store
+        self.automation_store = automation_store
 
     def json_parser(self, input_string: str):
         return parse_llm_json(input_string)
@@ -60,8 +63,9 @@ class AgentOrchestrator:
                 {user_input}
 
                 ###Guidelines###
-                - Prefer a specialist (weather, time, research, memory, MCP) when the user needs that capability.
+                - Prefer a specialist (weather, time, research, memory, automations, MCP) when the user needs that capability.
                 - Use the Memory Agent to remember, forget, or recall lasting personal facts. Also use it when the user states a new lasting fact (name, home city, units, preferences).
+                - Use the Automation Agent to schedule reminders, recurring research/weather prompts, list jobs, or cancel them. Phrases like remind me, every morning, daily at 8am, or cancel reminder belong here.
                 - When the user omits a detail that a durable memory covers (for example home city), rewrite the specialist input with that detail.
                 - Use the Chat Agent for greetings, conversation, writing, math, coding help, advice, and anything that does not need a specialist.
                 - Compound requests may need several agents in a loop. Read the context for results already gathered.
@@ -153,8 +157,16 @@ class AgentOrchestrator:
             self.memory_store.record_exchange(user_input, reply)
         return reply
 
+    def drain_due_automations(self, now=None) -> list[str]:
+        """Fire due reminders and run-jobs. Safe to call between REPL turns."""
+        store = self.automation_store
+        if store is None:
+            return []
+        return run_due_jobs(store, run_prompt=self.handle_message, now=now)
+
     def run(self) -> None:
         print("Jarvis: At your service. How can I help?")
+        self._print_due_automations()
         user_input = input("You: ")
         self.memory.append(f"User: {user_input}")
 
@@ -163,10 +175,15 @@ class AgentOrchestrator:
                 print("See you later!")
                 break
 
+            self._print_due_automations()
             response = self.handle_message(user_input)
             log_message(f"Response from Agent: {response}", "RESPONSE")
             user_input = input("You: ")
             self.memory.append(f"User: {user_input}")
+
+    def _print_due_automations(self) -> None:
+        for line in self.drain_due_automations():
+            print(f"Jarvis: {line}")
 
     def close(self) -> None:
         """Release long-lived resources such as MCP server processes."""

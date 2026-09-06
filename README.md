@@ -2,7 +2,7 @@
 
 A personal assistant you can run locally. Drop in **one AI API key** (Gemini, OpenAI, or Anthropic) and the built-in tools work — no weather key, no search key, no extra accounts.
 
-An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, general chat, and any **MCP** servers you connect.
+An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, scheduled automations, general chat, and any **MCP** servers you connect.
 
 ## Setup
 
@@ -51,6 +51,9 @@ Single prompt:
 python main.py --once "What time is it in New York?"
 python main.py --once "Research the James Webb Space Telescope"
 python main.py --once "Remember that I live in Austin and prefer Celsius"
+python main.py --once "Remind me in 10 minutes to stretch"
+python main.py --automations
+python main.py --run-due
 ```
 
 Type `exit`, `bye`, or `close` to leave the REPL.
@@ -65,6 +68,7 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Time | Local timezone database |
 | Research | Wikipedia + DuckDuckGo Instant Answers (no extra key) |
 | Memory | Local `~/.jarvis/memory.json` — remember facts across sessions (no extra key) |
+| Automations | Local `~/.jarvis/automations.json` — reminders and recurring prompts (no extra key) |
 | MCP tools | Local stdio servers from `mcp.json` (no extra AI key) |
 
 ## MCP connections
@@ -97,6 +101,20 @@ Jarvis keeps personal facts and recent conversation locally so it still knows yo
 
 No extra vendor account. The file is gitignored if you keep it in the project tree.
 
+## Scheduled automations
+
+Reminders and recurring research/weather checks live in a local JSON file. Still one AI key — no cron.com, Twilio, or extra vendor account.
+
+- Default file: `~/.jarvis/automations.json`
+- Override with `JARVIS_AUTOMATIONS_PATH` or `JARVIS_HOME`
+- Say **remind me in 10 minutes to stretch**, **every morning research the weather**, **list automations**, or **cancel** a job id
+- The REPL fires due jobs between turns
+- Hook system cron (or Task Scheduler) to `python main.py --run-due` so jobs still run while the REPL is closed
+- `python main.py --automations` lists jobs without needing an API key
+- Two kinds: **remind** (print a message) and **run** (send a stored prompt back through Jarvis)
+
+No extra vendor account. Recurring jobs use `every 30 minutes` or `daily at 8:00`.
+
 ## Development
 
 ```bash
@@ -108,14 +126,15 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 
 ## Project layout
 
-- `main.py` — CLI (`--once`, `--status`)
-- `src/assistant.py` — default weather, time, research, memory, chat, and optional MCP agents
+- `main.py` — CLI (`--once`, `--status`, `--automations`, `--run-due`)
+- `src/assistant.py` — default weather, time, research, memory, automation, chat, and optional MCP agents
+- `src/automation/` — local job store, schedule parser, and due-job runner
 - `src/config.py` — one-key provider detection
 - `src/llm.py` — Gemini / OpenAI / Anthropic client
 - `src/mcp/` — stdio MCP client and `mcp.json` loader
 - `src/memory/` — local persistent facts and recent turns
 - `src/orchestrator.py` — routes a request, loops specialists, then answers
-- `src/tools/` — weather, time, research, memory, MCP adapters
+- `src/tools/` — weather, time, research, memory, automation, MCP adapters
 - `tests/` — unit tests that do not need live API keys
 
 ## Roadmap
@@ -126,6 +145,6 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 2. ~~General chat agent so non-tool questions are not forced into weather/time/research~~
 3. ~~Multi-step orchestration so compound requests finish instead of stopping on the first tool result~~
 4. ~~Persistent memory across sessions~~ (local `~/.jarvis/memory.json`)
-5. Scheduled automations (reminders, recurring research)
+5. ~~Scheduled automations~~ (local `~/.jarvis/automations.json`, `--run-due`)
 6. OAuth for mail / calendar instead of extra API keys
 7. Computer use / browser control
