@@ -12,6 +12,7 @@ from src.assistant import build_orchestrator
 from src.automation.runner import format_due_report
 from src.automation.store import AutomationStore
 from src.config import MissingAPIKeyError, describe_runtime, get_llm_settings
+from src.tools.computer_tool import ComputerTool
 
 
 def main() -> None:
@@ -37,7 +38,16 @@ def main() -> None:
         action="store_true",
         help="Fire due reminders and run-jobs, then exit (for system cron)",
     )
+    parser.add_argument(
+        "--browse",
+        metavar="URL",
+        help="Open a public URL and print readable text (no API key needed)",
+    )
     args = parser.parse_args()
+
+    if args.browse and not args.run_due and not args.once and not args.status:
+        print(ComputerTool().use(args.browse))
+        return
 
     if args.automations and not args.run_due and not args.once and not args.status:
         print(AutomationStore().format_list())
@@ -69,7 +79,8 @@ def main() -> None:
         print(f"Jarvis online · {settings.summary()}")
         print(
             "Built-in tools need no extra keys. Chat uses the same LLM. "
-            "Memory and automations persist locally. MCP servers come from mcp.json."
+            "Memory and automations persist locally. Computer use can open "
+            "public web pages. MCP servers come from mcp.json."
         )
         print("Type exit to leave.")
         orchestrator.run()

@@ -13,6 +13,7 @@ def test_build_orchestrator_includes_research_weather_time_and_chat():
             "Research Agent",
             "Memory Agent",
             "Automation Agent",
+            "Computer Agent",
             "Chat Agent",
         }
         assert orchestrator.memory_store is not None

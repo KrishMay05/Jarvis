@@ -9,6 +9,7 @@ from src.mcp.manager import McpManager, start_mcp_manager
 from src.memory.store import MemoryStore
 from src.orchestrator import AgentOrchestrator
 from src.tools.automation_tool import AutomationTool
+from src.tools.computer_tool import ComputerTool
 from src.tools.memory_tool import MemoryTool
 from src.tools.research_tool import ResearchTool
 from src.tools.time_tool import TimeTool
@@ -70,13 +71,26 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
         Model=model,
         memory_store=memory,
     )
+    computer_agent = Agent(
+        Name="Computer Agent",
+        Description=(
+            "Computer use: opens public web pages, reads the visible text, "
+            "lists links, and follows a link from the last page. Use when "
+            "the user pastes a URL, says open/browse/go to a site, asks "
+            "what is on a page, or wants to click a link. Local HTTP only "
+            "— no extra API key. Not for encyclopedic research without a URL."
+        ),
+        Tools=[ComputerTool()],
+        Model=model,
+        memory_store=memory,
+    )
     chat_agent = Agent(
         Name="Chat Agent",
         Description=(
             "General conversation, writing, math, coding help, brainstorming, "
             "and questions that do not need weather, time, research, memory, "
-            "automations, or MCP tools. Default for greetings and open-ended "
-            "chat. Uses the same AI key — no extra accounts."
+            "automations, computer use, or MCP tools. Default for greetings "
+            "and open-ended chat. Uses the same AI key — no extra accounts."
         ),
         Tools=[],
         Model=model,
@@ -88,6 +102,7 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
         research_agent,
         memory_agent,
         automation_agent,
+        computer_agent,
         chat_agent,
     ]
     closables: list[McpManager] = []
