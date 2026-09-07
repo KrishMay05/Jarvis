@@ -1,9 +1,9 @@
 """Resolve a single LLM provider from environment variables.
 
 Jarvis is designed so you drop in one AI API key and the built-in tools
-(weather, time, research, chat, memory, automations) work without extra
-vendor accounts. Optional MCP servers add third-party tools the same way —
-still no second AI key.
+(weather, time, research, chat, memory, automations, computer/browser)
+work without extra vendor accounts. Optional MCP servers add third-party
+tools the same way — still no second AI key.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ _KEY_PREFIXES = (
     ("AIza", "gemini"),
 )
 
-USER_AGENT = "JarvisPersonalAssistant/0.6 (+https://github.com/KrishMay05/Jarvis)"
+USER_AGENT = "JarvisPersonalAssistant/0.7 (+https://github.com/KrishMay05/Jarvis)"
 
 
 @dataclass(frozen=True)
@@ -97,7 +97,8 @@ def describe_runtime(settings: LLMSettings | None = None) -> str:
         f"LLM: {settings.summary()}\n"
         "Tools: weather (wttr.in), time (local clock), "
         "research (Wikipedia + DuckDuckGo), chat (your LLM), "
-        "memory (local file), automations (local schedule)\n"
+        "memory (local file), automations (local schedule), "
+        "computer (public web pages)\n"
         f"{mcp_status_line()}\n"
         f"{memory_status_line()}\n"
         f"{automation_status_line()}\n"

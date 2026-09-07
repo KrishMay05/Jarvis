@@ -2,7 +2,7 @@
 
 A personal assistant you can run locally. Drop in **one AI API key** (Gemini, OpenAI, or Anthropic) and the built-in tools work — no weather key, no search key, no extra accounts.
 
-An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, scheduled automations, general chat, and any **MCP** servers you connect.
+An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, scheduled automations, computer use (open public web pages), general chat, and any **MCP** servers you connect.
 
 ## Setup
 
@@ -52,6 +52,8 @@ python main.py --once "What time is it in New York?"
 python main.py --once "Research the James Webb Space Telescope"
 python main.py --once "Remember that I live in Austin and prefer Celsius"
 python main.py --once "Remind me in 10 minutes to stretch"
+python main.py --once "Open https://example.com and tell me what it says"
+python main.py --browse https://example.com
 python main.py --automations
 python main.py --run-due
 ```
@@ -69,6 +71,7 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Research | Wikipedia + DuckDuckGo Instant Answers (no extra key) |
 | Memory | Local `~/.jarvis/memory.json` — remember facts across sessions (no extra key) |
 | Automations | Local `~/.jarvis/automations.json` — reminders and recurring prompts (no extra key) |
+| Computer use | Open public http(s) pages, read the text, follow on-page links (no extra key) |
 | MCP tools | Local stdio servers from `mcp.json` (no extra AI key) |
 
 ## MCP connections
@@ -115,6 +118,19 @@ Reminders and recurring research/weather checks live in a local JSON file. Still
 
 No extra vendor account. Recurring jobs use `every 30 minutes` or `daily at 8:00`.
 
+## Computer use
+
+Jarvis can operate a **local public-web browser** with the same AI key — no Playwright account, Browserbase, or extra vendor.
+
+- Say **open https://example.com**, **browse python.org**, **what's on this page**, or **follow the Docs link**
+- The Computer Agent fetches the page, strips scripts/styles, and returns readable text plus top links
+- Follow-up **follow** / **click** uses links from the last opened page in this process
+- `python main.py --browse https://example.com` reads a page without an API key
+- Only public `http`/`https` URLs are allowed. Localhost, private LAN, and cloud-metadata addresses are blocked
+- JavaScript-heavy apps may return little text; encyclopedic questions without a URL still go to the Research Agent
+
+No extra vendor account. This is the first computer-use layer; desktop mouse/keyboard control can come later.
+
 ## Development
 
 ```bash
@@ -126,15 +142,16 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 
 ## Project layout
 
-- `main.py` — CLI (`--once`, `--status`, `--automations`, `--run-due`)
-- `src/assistant.py` — default weather, time, research, memory, automation, chat, and optional MCP agents
+- `main.py` — CLI (`--once`, `--status`, `--automations`, `--run-due`, `--browse`)
+- `src/assistant.py` — default weather, time, research, memory, automation, computer, chat, and optional MCP agents
 - `src/automation/` — local job store, schedule parser, and due-job runner
+- `src/computer/` — public-web fetch, HTML extract, and in-process link following
 - `src/config.py` — one-key provider detection
 - `src/llm.py` — Gemini / OpenAI / Anthropic client
 - `src/mcp/` — stdio MCP client and `mcp.json` loader
 - `src/memory/` — local persistent facts and recent turns
 - `src/orchestrator.py` — routes a request, loops specialists, then answers
-- `src/tools/` — weather, time, research, memory, automation, MCP adapters
+- `src/tools/` — weather, time, research, memory, automation, computer, MCP adapters
 - `tests/` — unit tests that do not need live API keys
 
 ## Roadmap
@@ -146,5 +163,7 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 3. ~~Multi-step orchestration so compound requests finish instead of stopping on the first tool result~~
 4. ~~Persistent memory across sessions~~ (local `~/.jarvis/memory.json`)
 5. ~~Scheduled automations~~ (local `~/.jarvis/automations.json`, `--run-due`)
-6. OAuth for mail / calendar instead of extra API keys
-7. Computer use / browser control
+6. ~~Computer use / browser control~~ (public-web pages + link following; no extra key)
+7. OAuth for mail / calendar instead of extra API keys
+8. Desktop / JS-capable computer use (Playwright or screenshot+input)
+9. Thin local web UI
