@@ -2,7 +2,7 @@
 
 A personal assistant you can run locally. Drop in **one AI API key** (Gemini, OpenAI, or Anthropic) and the built-in tools work — no weather key, no search key, no extra accounts.
 
-An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, scheduled automations, computer use (open public web pages), general chat, and any **MCP** servers you connect.
+An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, scheduled automations, computer use (open public web pages), **mail and calendar** (Google OAuth), general chat, and any **MCP** servers you connect.
 
 ## Setup
 
@@ -53,8 +53,11 @@ python main.py --once "Research the James Webb Space Telescope"
 python main.py --once "Remember that I live in Austin and prefer Celsius"
 python main.py --once "Remind me in 10 minutes to stretch"
 python main.py --once "Open https://example.com and tell me what it says"
+python main.py --once "What's in my inbox?"
 python main.py --browse https://example.com
 python main.py --automations
+python main.py --auth
+python main.py --connect google
 python main.py --run-due
 ```
 
@@ -72,6 +75,8 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Memory | Local `~/.jarvis/memory.json` — remember facts across sessions (no extra key) |
 | Automations | Local `~/.jarvis/automations.json` — reminders and recurring prompts (no extra key) |
 | Computer use | Open public http(s) pages, read the text, follow on-page links (no extra key) |
+| Mail | Gmail inbox/search after `python main.py --connect google` (OAuth, not an AI key) |
+| Calendar | Upcoming Google Calendar events after the same Google login |
 | MCP tools | Local stdio servers from `mcp.json` (no extra AI key) |
 
 ## MCP connections
@@ -131,6 +136,38 @@ Jarvis can operate a **local public-web browser** with the same AI key — no Pl
 
 No extra vendor account. This is the first computer-use layer; desktop mouse/keyboard control can come later.
 
+## Mail and calendar (connect via auth)
+
+Gmail and Google Calendar are optional. They use **OAuth**, not a second AI vendor key.
+
+1. In [Google Cloud Console](https://console.cloud.google.com/) create a project (or reuse one).
+2. Enable **Gmail API** and **Google Calendar API**.
+3. Create an OAuth client ID of type **Desktop app**.
+4. Put the client id in `.env`:
+
+```
+GOOGLE_OAUTH_CLIENT_ID=....apps.googleusercontent.com
+```
+
+Web clients may also set `GOOGLE_OAUTH_CLIENT_SECRET`. Then:
+
+```bash
+python main.py --connect google
+```
+
+Jarvis starts a localhost callback, opens the Google consent screen, and stores tokens in `~/.jarvis/auth.json` (mode 0600). Scopes are **readonly** mail and calendar plus email identity.
+
+```bash
+python main.py --auth
+python main.py --once "What's in my inbox?"
+python main.py --once "What's on my calendar today?"
+python main.py --disconnect google
+```
+
+`--auth`, `--connect`, and `--disconnect` do not need an AI API key. If Google is not connected, the Mail and Calendar agents tell you to run `--connect google` instead of failing the rest of Jarvis.
+
+Override the token file with `JARVIS_AUTH_PATH` or `JARVIS_HOME`. The file is gitignored.
+
 ## Development
 
 ```bash
@@ -142,8 +179,9 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 
 ## Project layout
 
-- `main.py` — CLI (`--once`, `--status`, `--automations`, `--run-due`, `--browse`)
-- `src/assistant.py` — default weather, time, research, memory, automation, computer, chat, and optional MCP agents
+- `main.py` — CLI (`--once`, `--status`, `--automations`, `--run-due`, `--browse`, `--auth`, `--connect`, `--disconnect`)
+- `src/assistant.py` — default weather, time, research, memory, automation, computer, mail, calendar, chat, and optional MCP agents
+- `src/auth/` — local OAuth token store and Google mail/calendar clients
 - `src/automation/` — local job store, schedule parser, and due-job runner
 - `src/computer/` — public-web fetch, HTML extract, and in-process link following
 - `src/config.py` — one-key provider detection
@@ -151,7 +189,7 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 - `src/mcp/` — stdio MCP client and `mcp.json` loader
 - `src/memory/` — local persistent facts and recent turns
 - `src/orchestrator.py` — routes a request, loops specialists, then answers
-- `src/tools/` — weather, time, research, memory, automation, computer, MCP adapters
+- `src/tools/` — weather, time, research, memory, automation, computer, mail, calendar, MCP adapters
 - `tests/` — unit tests that do not need live API keys
 
 ## Roadmap
@@ -164,6 +202,8 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 4. ~~Persistent memory across sessions~~ (local `~/.jarvis/memory.json`)
 5. ~~Scheduled automations~~ (local `~/.jarvis/automations.json`, `--run-due`)
 6. ~~Computer use / browser control~~ (public-web pages + link following; no extra key)
-7. OAuth for mail / calendar instead of extra API keys
+7. ~~OAuth for mail / calendar~~ (Google PKCE + localhost; readonly Gmail and Calendar)
 8. Desktop / JS-capable computer use (Playwright or screenshot+input)
 9. Thin local web UI
+10. Provider fallback if the first AI key fails
+11. Microsoft / Outlook OAuth using the same auth store
