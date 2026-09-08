@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from src.agent import Agent
+from src.auth.store import AuthStore
 from src.automation.store import AutomationStore
 from src.config import LLMSettings, get_llm_settings
 from src.mcp.manager import McpManager, start_mcp_manager
 from src.memory.store import MemoryStore
 from src.orchestrator import AgentOrchestrator
 from src.tools.automation_tool import AutomationTool
+from src.tools.calendar_tool import CalendarTool
 from src.tools.computer_tool import ComputerTool
+from src.tools.mail_tool import MailTool
 from src.tools.memory_tool import MemoryTool
 from src.tools.research_tool import ResearchTool
 from src.tools.time_tool import TimeTool
@@ -22,6 +25,7 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
     model = settings.model
     memory = MemoryStore()
     automations = AutomationStore()
+    auth = AuthStore()
 
     weather_agent = Agent(
         Name="Weather Agent",
@@ -84,12 +88,38 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
         Model=model,
         memory_store=memory,
     )
+    mail_agent = Agent(
+        Name="Mail Agent",
+        Description=(
+            "Reads Gmail (inbox, unread, search) after Google is connected "
+            "with `python main.py --connect google`. Use when the user asks "
+            "about email, inbox, unread mail, or a message from someone. "
+            "OAuth login — not a second AI key. If Google is not connected, "
+            "tell them to run --connect google."
+        ),
+        Tools=[MailTool(auth)],
+        Model=model,
+        memory_store=memory,
+    )
+    calendar_agent = Agent(
+        Name="Calendar Agent",
+        Description=(
+            "Reads upcoming Google Calendar events after Google is connected "
+            "with `python main.py --connect google`. Use when the user asks "
+            "what's on the calendar, upcoming meetings, or today's agenda. "
+            "OAuth login — not a second AI key. If Google is not connected, "
+            "tell them to run --connect google."
+        ),
+        Tools=[CalendarTool(auth)],
+        Model=model,
+        memory_store=memory,
+    )
     chat_agent = Agent(
         Name="Chat Agent",
         Description=(
             "General conversation, writing, math, coding help, brainstorming, "
             "and questions that do not need weather, time, research, memory, "
-            "automations, computer use, or MCP tools. Default for greetings "
+            "automations, computer use, mail, calendar, or MCP tools. Default for greetings "
             "and open-ended chat. Uses the same AI key — no extra accounts."
         ),
         Tools=[],
@@ -103,6 +133,8 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
         memory_agent,
         automation_agent,
         computer_agent,
+        mail_agent,
+        calendar_agent,
         chat_agent,
     ]
     closables: list[McpManager] = []

@@ -14,10 +14,14 @@ def test_build_orchestrator_includes_research_weather_time_and_chat():
             "Memory Agent",
             "Automation Agent",
             "Computer Agent",
+            "Mail Agent",
+            "Calendar Agent",
             "Chat Agent",
         }
         assert orchestrator.memory_store is not None
         assert orchestrator.automation_store is not None
+        assert by_name["Mail Agent"].tools[0].name() == "mail"
+        assert by_name["Calendar Agent"].tools[0].name() == "calendar"
         for name, agent in by_name.items():
             assert agent.model == "gemini-2.0-flash"
             assert agent.memory_store is orchestrator.memory_store
