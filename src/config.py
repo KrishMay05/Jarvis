@@ -2,9 +2,10 @@
 
 Jarvis is designed so you drop in one AI API key and the built-in tools
 (weather, time, research, chat, memory, automations, computer/browser)
-work without extra vendor accounts. Mail and calendar use optional Google
-OAuth — connect via auth, not a second AI key. Optional MCP servers add
-third-party tools the same way — still no second AI key.
+work without extra vendor accounts. A localhost web UI (`--serve`) uses
+that same key. Mail and calendar use optional Google OAuth — connect via
+auth, not a second AI key. Optional MCP servers add third-party tools
+the same way — still no second AI key.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ _KEY_PREFIXES = (
     ("AIza", "gemini"),
 )
 
-USER_AGENT = "JarvisPersonalAssistant/0.8 (+https://github.com/KrishMay05/Jarvis)"
+USER_AGENT = "JarvisPersonalAssistant/0.9 (+https://github.com/KrishMay05/Jarvis)"
 
 
 @dataclass(frozen=True)
@@ -100,7 +101,8 @@ def describe_runtime(settings: LLMSettings | None = None) -> str:
         "Tools: weather (wttr.in), time (local clock), "
         "research (Wikipedia + DuckDuckGo), chat (your LLM), "
         "memory (local file), automations (local schedule), "
-        "computer (public web pages), mail/calendar (Google OAuth)\n"
+        "computer (public web pages), mail/calendar (Google OAuth), "
+        "web UI (localhost --serve)\n"
         f"{mcp_status_line()}\n"
         f"{memory_status_line()}\n"
         f"{automation_status_line()}\n"

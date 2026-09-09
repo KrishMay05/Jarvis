@@ -15,6 +15,7 @@ from src.automation.runner import format_due_report
 from src.automation.store import AutomationStore
 from src.config import MissingAPIKeyError, describe_runtime, get_llm_settings
 from src.tools.computer_tool import ComputerTool
+from src.ui.server import DEFAULT_HOST, DEFAULT_PORT, serve
 
 
 def main() -> None:
@@ -64,6 +65,27 @@ def main() -> None:
         const="google",
         help="Forget a stored OAuth login (default: google)",
     )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Start the localhost web UI (no extra API key; chat uses your one LLM key)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"Port for --serve (default: {DEFAULT_PORT})",
+    )
+    parser.add_argument(
+        "--host",
+        default=DEFAULT_HOST,
+        help="Bind address for --serve (default: 127.0.0.1 loopback)",
+    )
+    parser.add_argument(
+        "--open",
+        action="store_true",
+        help="Open the web UI in a browser after --serve starts",
+    )
     args = parser.parse_args()
 
     if args.browse and not args.run_due and not args.once and not args.status:
@@ -84,6 +106,10 @@ def main() -> None:
 
     if args.connect and not args.run_due and not args.once and not args.status:
         _run_connect(args.connect)
+        return
+
+    if args.serve:
+        _run_serve(args.host, args.port, args.open)
         return
 
     try:
@@ -114,7 +140,8 @@ def main() -> None:
             "Built-in tools need no extra keys. Chat uses the same LLM. "
             "Memory and automations persist locally. Computer use can open "
             "public web pages. Mail and calendar use Google OAuth "
-            "(--connect google). MCP servers come from mcp.json."
+            "(--connect google). MCP servers come from mcp.json. "
+            "A localhost web UI is python main.py --serve."
         )
         print("Type exit to leave.")
         orchestrator.run()
@@ -132,6 +159,29 @@ def _run_connect(provider: str) -> None:
         )
         sys.exit(1)
     print(connect_google())
+
+
+def _run_serve(host: str, port: int, open_browser: bool) -> None:
+    orchestrator = None
+    settings = None
+    missing = None
+    try:
+        settings = get_llm_settings()
+        orchestrator = build_orchestrator(settings)
+    except MissingAPIKeyError as exc:
+        missing = str(exc)
+    try:
+        serve(
+            host=host,
+            port=port,
+            open_browser=open_browser,
+            orchestrator=orchestrator,
+            settings=settings,
+            missing_key=missing,
+        )
+    finally:
+        if orchestrator is not None:
+            orchestrator.close()
 
 
 def _run_disconnect(provider: str) -> None:
