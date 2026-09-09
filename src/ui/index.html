@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Jarvis</title>
+    <style>
+      :root {
+        --bg: #07090d;
+        --panel: #10151d;
+        --panel-2: #161d28;
+        --line: rgba(212, 175, 55, 0.22);
+        --gold: #d4af37;
+        --gold-2: #f0d78c;
+        --ink: #e8eef6;
+        --muted: #8b97a8;
+        --danger: #ff8a7a;
+        --ok: #7dffb3;
+        --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+        font-family: "Segoe UI", "Avenir Next", ui-sans-serif, system-ui, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); }
+      body {
+        background:
+          radial-gradient(1200px 600px at 10% -10%, rgba(212, 175, 55, 0.12), transparent 50%),
+          radial-gradient(800px 400px at 100% 0%, rgba(80, 140, 255, 0.08), transparent 45%),
+          var(--bg);
+      }
+      .shell {
+        max-width: 1180px;
+        margin: 0 auto;
+        min-height: 100%;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        padding: 20px 20px 16px;
+        gap: 16px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+      .brand h1 {
+        margin: 0;
+        font-size: 1.15rem;
+        font-weight: 650;
+        color: var(--gold-2);
+      }
+      .brand span { color: var(--muted); letter-spacing: 0.08em; font-size: 0.78rem; }
+      .pill {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--gold-2);
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 0.78rem;
+      }
+      .pill.bad { color: var(--danger); }
+      .layout {
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        gap: 16px;
+        min-height: 0;
+      }
+      aside, .chat {
+        background: linear-gradient(180deg, var(--panel), var(--panel-2));
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: var(--shadow);
+        min-height: 0;
+      }
+      aside {
+        padding: 18px 16px;
+        overflow: auto;
+      }
+      aside h2 {
+        margin: 18px 0 8px;
+        font-size: 0.72rem;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--gold);
+      }
+      aside h2:first-child { margin-top: 0; }
+      aside p, .meta {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.84rem;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+      .tools {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .chip {
+        border: 1px solid var(--line);
+        color: var(--gold-2);
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 0.72rem;
+      }
+      .chat {
+        display: grid;
+        grid-template-rows: 1fr auto;
+      }
+      #log {
+        overflow: auto;
+        padding: 22px 22px 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .msg {
+        max-width: 80%;
+        padding: 12px 14px;
+        border-radius: 14px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        font-size: 0.95rem;
+      }
+      .msg.user {
+        align-self: flex-end;
+        background: rgba(212, 175, 55, 0.16);
+        border: 1px solid var(--line);
+      }
+      .msg.jarvis {
+        align-self: flex-start;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .msg.system { align-self: stretch; max-width: none; color: var(--muted); font-size: 0.86rem; }
+      .msg.due {
+        align-self: stretch;
+        max-width: none;
+        border-color: rgba(125, 255, 179, 0.35);
+        color: var(--ok);
+      }
+      form {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        padding: 14px;
+        border-top: 1px solid var(--line);
+      }
+      textarea {
+        resize: none;
+        min-height: 52px;
+        max-height: 160px;
+        background: #0b1017;
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 14px;
+        font: inherit;
+      }
+      textarea:focus { outline: 1px solid var(--gold); }
+      button {
+        background: var(--gold);
+        color: #1a1406;
+        border: 0;
+        border-radius: 12px;
+        padding: 0 18px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      .hint { color: var(--muted); font-size: 0.78rem; padding: 0 16px 12px; }
+      @media (max-width: 860px) {
+        .layout { grid-template-columns: 1fr; }
+        aside { max-height: 240px; }
+        .msg { max-width: 92%; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <div class="brand">
+          <h1>Jarvis</h1>
+          <span>personal assistant</span>
+        </div>
+        <div id="pill" class="pill">Checking…</div>
+      </header>
+      <div class="layout">
+        <aside>
+          <h2>Status</h2>
+          <p id="llm">Loading runtime…</p>
+          <h2>Tools</h2>
+          <div id="tools" class="tools"></div>
+          <h2>Memory</h2>
+          <p id="memory" class="meta"></p>
+          <h2>Automations</h2>
+          <p id="automations" class="meta"></p>
+          <h2>Auth</h2>
+          <p id="auth" class="meta"></p>
+          <h2>MCP</h2>
+          <p id="mcp" class="meta"></p>
+        </aside>
+        <section class="chat">
+          <div id="log"></div>
+          <form id="composer">
+            <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox"></textarea>
+            <button id="send" type="submit">Send</button>
+          </form>
+          <div class="hint">Localhost only. One AI key in .env. Google mail/calendar via --connect google.</div>
+        </section>
+      </div>
+    </div>
+    <script>
+      const log = document.getElementById("log");
+      const pill = document.getElementById("pill");
+      const send = document.getElementById("send");
+      const prompt = document.getElementById("prompt");
+      let ready = false;
+
+      function add(text, cls) {
+        const el = document.createElement("div");
+        el.className = "msg " + cls;
+        el.textContent = text;
+        log.appendChild(el);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      async function refreshStatus() {
+        const res = await fetch("/api/status");
+        const data = await res.json();
+        ready = Boolean(data.ready);
+        pill.textContent = ready ? (data.llm && data.llm.summary) || "Online" : "Needs API key";
+        pill.classList.toggle("bad", !ready);
+        send.disabled = !ready;
+        document.getElementById("llm").textContent = data.error || (data.runtime || "Ready.");
+        document.getElementById("memory").textContent = data.memory || "";
+        document.getElementById("automations").textContent = data.automations || "";
+        document.getElementById("auth").textContent = data.auth || "";
+        document.getElementById("mcp").textContent = data.mcp || "";
+        const tools = document.getElementById("tools");
+        tools.innerHTML = "";
+        (data.tools || []).forEach((name) => {
+          const chip = document.createElement("span");
+          chip.className = "chip";
+          chip.textContent = name;
+          tools.appendChild(chip);
+        });
+        if (!log.childElementCount) {
+          if (ready) {
+            add("At your service. Weather, research, memory, automations, computer use, mail, and calendar — one AI key.", "jarvis");
+          } else {
+            add(data.error || "Drop one AI API key into .env, then restart python main.py --serve.", "system");
+          }
+        }
+      }
+
+      document.getElementById("composer").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const message = prompt.value.trim();
+        if (!message || !ready) return;
+        prompt.value = "";
+        add(message, "user");
+        send.disabled = true;
+        try {
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message }),
+          });
+          const data = await res.json();
+          (data.due || []).forEach((line) => add(line, "due"));
+          if (!res.ok) {
+            add(data.error || "Jarvis could not answer that.", "system");
+          } else {
+            add(data.reply || "", "jarvis");
+          }
+        } catch (err) {
+          add("Could not reach the local Jarvis server.", "system");
+        }
+        send.disabled = !ready;
+        refreshStatus();
+      });
+
+      prompt.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" && !event.shiftKey) {
+          event.preventDefault();
+          document.getElementById("composer").requestSubmit();
+        }
+      });
+
+      refreshStatus().catch(() => {
+        pill.textContent = "Offline";
+        pill.classList.add("bad");
+        add("The local UI server is not responding.", "system");
+      });
+    </script>
+  </body>
+</html>

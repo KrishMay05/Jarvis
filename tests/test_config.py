@@ -102,6 +102,7 @@ def test_describe_runtime_mentions_one_key_tools(monkeypatch):
     assert "computer" in text.lower()
     assert "mail" in text.lower()
     assert "calendar" in text.lower()
+    assert "web ui" in text.lower()
     assert "none required" in text.lower()
     assert "MCP:" in text
     assert "Memory:" in text

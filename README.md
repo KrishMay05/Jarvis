@@ -2,7 +2,7 @@
 
 A personal assistant you can run locally. Drop in **one AI API key** (Gemini, OpenAI, or Anthropic) and the built-in tools work — no weather key, no search key, no extra accounts.
 
-An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, scheduled automations, computer use (open public web pages), **mail and calendar** (Google OAuth), general chat, and any **MCP** servers you connect.
+An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, scheduled automations, computer use (open public web pages), **mail and calendar** (Google OAuth), general chat, and any **MCP** servers you connect. Talk to it in the terminal or at a **localhost web UI** (`python main.py --serve`).
 
 ## Setup
 
@@ -58,8 +58,12 @@ python main.py --browse https://example.com
 python main.py --automations
 python main.py --auth
 python main.py --connect google
+python main.py --serve
+python main.py --serve --open
 python main.py --run-due
 ```
+
+The web UI is **localhost only** (`http://127.0.0.1:8787/`). Same one AI key as the REPL — no extra vendor account. If `.env` has no key yet, the page still loads and tells you what to add.
 
 Type `exit`, `bye`, or `close` to leave the REPL.
 
@@ -78,6 +82,7 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Mail | Gmail inbox/search after `python main.py --connect google` (OAuth, not an AI key) |
 | Calendar | Upcoming Google Calendar events after the same Google login |
 | MCP tools | Local stdio servers from `mcp.json` (no extra AI key) |
+| Web UI | `python main.py --serve` on 127.0.0.1 (no extra key) |
 
 ## MCP connections
 
@@ -168,6 +173,21 @@ python main.py --disconnect google
 
 Override the token file with `JARVIS_AUTH_PATH` or `JARVIS_HOME`. The file is gitignored.
 
+## Local web UI
+
+The REPL is optional. After one AI key is in `.env`:
+
+```bash
+python main.py --serve --open
+```
+
+Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar.
+
+- No extra API key and no cloud UI vendor
+- Binds to loopback so the assistant is not on your LAN
+- Works without a key too: the page explains what to put in `.env`, and chat stays paused
+- Status/health are JSON at `/api/status` and `/api/health`
+
 ## Development
 
 ```bash
@@ -179,8 +199,9 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 
 ## Project layout
 
-- `main.py` — CLI (`--once`, `--status`, `--automations`, `--run-due`, `--browse`, `--auth`, `--connect`, `--disconnect`)
+- `main.py` — CLI (`--once`, `--status`, `--automations`, `--run-due`, `--browse`, `--auth`, `--connect`, `--disconnect`, `--serve`)
 - `src/assistant.py` — default weather, time, research, memory, automation, computer, mail, calendar, chat, and optional MCP agents
+- `src/auth/` — local OAuth token store and Google mail/calendar clients
 - `src/auth/` — local OAuth token store and Google mail/calendar clients
 - `src/automation/` — local job store, schedule parser, and due-job runner
 - `src/computer/` — public-web fetch, HTML extract, and in-process link following
@@ -190,6 +211,7 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 - `src/memory/` — local persistent facts and recent turns
 - `src/orchestrator.py` — routes a request, loops specialists, then answers
 - `src/tools/` — weather, time, research, memory, automation, computer, mail, calendar, MCP adapters
+- `src/ui/` — localhost web chat UI (`--serve`)
 - `tests/` — unit tests that do not need live API keys
 
 ## Roadmap
@@ -203,7 +225,7 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 5. ~~Scheduled automations~~ (local `~/.jarvis/automations.json`, `--run-due`)
 6. ~~Computer use / browser control~~ (public-web pages + link following; no extra key)
 7. ~~OAuth for mail / calendar~~ (Google PKCE + localhost; readonly Gmail and Calendar)
-8. Desktop / JS-capable computer use (Playwright or screenshot+input)
-9. Thin local web UI
+8. ~~Thin local web UI~~ (`python main.py --serve` on 127.0.0.1)
+9. Desktop / JS-capable computer use (Playwright or screenshot+input)
 10. Provider fallback if the first AI key fails
 11. Microsoft / Outlook OAuth using the same auth store
