@@ -2,7 +2,7 @@
 
 A personal assistant you can run locally. Drop in **one AI API key** (Gemini, OpenAI, or Anthropic) and the built-in tools work — no weather key, no search key, no extra accounts.
 
-An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, scheduled automations, computer use (open public web pages), **mail and calendar** (Google OAuth), general chat, and any **MCP** servers you connect. Talk to it in the terminal or at a **localhost web UI** (`python main.py --serve`).
+An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, scheduled automations, computer use (open public web pages), **mail and calendar** (Google OAuth from the CLI or the localhost UI), general chat, and any **MCP** servers you connect. Talk to it in the terminal or at a **localhost web UI** (`python main.py --serve`).
 
 ## Setup
 
@@ -79,10 +79,10 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Memory | Local `~/.jarvis/memory.json` — remember facts across sessions (no extra key) |
 | Automations | Local `~/.jarvis/automations.json` — reminders and recurring prompts (no extra key) |
 | Computer use | Open public http(s) pages, read the text, follow on-page links (no extra key) |
-| Mail | Gmail inbox/search after `python main.py --connect google` (OAuth, not an AI key) |
+| Mail | Gmail inbox/search after Connect Google in the web UI or `python main.py --connect google` (OAuth, not an AI key) |
 | Calendar | Upcoming Google Calendar events after the same Google login |
 | MCP tools | Local stdio servers from `mcp.json` (no extra AI key) |
-| Web UI | `python main.py --serve` on 127.0.0.1 (no extra key) |
+| Web UI | `python main.py --serve` on 127.0.0.1 (no extra key; Connect Google in the sidebar) |
 
 ## MCP connections
 
@@ -154,7 +154,13 @@ Gmail and Google Calendar are optional. They use **OAuth**, not a second AI vend
 GOOGLE_OAUTH_CLIENT_ID=....apps.googleusercontent.com
 ```
 
-Web clients may also set `GOOGLE_OAUTH_CLIENT_SECRET`. Then:
+Web clients may also set `GOOGLE_OAUTH_CLIENT_SECRET`. Then connect from either place:
+
+```bash
+python main.py --serve --open
+```
+
+Click **Connect Google** in the sidebar. Jarvis uses the same localhost UI as the OAuth callback, so you do not leave the assistant. Or from the terminal:
 
 ```bash
 python main.py --connect google
@@ -169,7 +175,7 @@ python main.py --once "What's on my calendar today?"
 python main.py --disconnect google
 ```
 
-`--auth`, `--connect`, and `--disconnect` do not need an AI API key. If Google is not connected, the Mail and Calendar agents tell you to run `--connect google` instead of failing the rest of Jarvis.
+`--auth`, `--connect`, `--disconnect`, and Connect Google in the web UI do not need an AI API key. If Google is not connected, the Mail and Calendar agents tell you to connect instead of failing the rest of Jarvis.
 
 Override the token file with `JARVIS_AUTH_PATH` or `JARVIS_HOME`. The file is gitignored.
 
@@ -181,12 +187,13 @@ The REPL is optional. After one AI key is in `.env`:
 python main.py --serve --open
 ```
 
-Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar.
+Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. **Connect Google** and **Disconnect** live in that sidebar — same OAuth as `--connect google`, no extra AI key. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar.
 
 - No extra API key and no cloud UI vendor
 - Binds to loopback so the assistant is not on your LAN
-- Works without a key too: the page explains what to put in `.env`, and chat stays paused
+- Works without a key too: the page explains what to put in `.env`, chat stays paused, and Google login still works
 - Status/health are JSON at `/api/status` and `/api/health`
+- Google OAuth callback is `/oauth/google/callback` on the same localhost server
 
 ## Development
 
@@ -201,7 +208,6 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 
 - `main.py` — CLI (`--once`, `--status`, `--automations`, `--run-due`, `--browse`, `--auth`, `--connect`, `--disconnect`, `--serve`)
 - `src/assistant.py` — default weather, time, research, memory, automation, computer, mail, calendar, chat, and optional MCP agents
-- `src/auth/` — local OAuth token store and Google mail/calendar clients
 - `src/auth/` — local OAuth token store and Google mail/calendar clients
 - `src/automation/` — local job store, schedule parser, and due-job runner
 - `src/computer/` — public-web fetch, HTML extract, and in-process link following
@@ -226,6 +232,7 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 6. ~~Computer use / browser control~~ (public-web pages + link following; no extra key)
 7. ~~OAuth for mail / calendar~~ (Google PKCE + localhost; readonly Gmail and Calendar)
 8. ~~Thin local web UI~~ (`python main.py --serve` on 127.0.0.1)
-9. Desktop / JS-capable computer use (Playwright or screenshot+input)
-10. Provider fallback if the first AI key fails
-11. Microsoft / Outlook OAuth using the same auth store
+9. ~~Connect Google from the web UI~~ (same localhost server as the OAuth callback)
+10. Desktop / JS-capable computer use (Playwright or screenshot+input)
+11. Provider fallback if the first AI key fails
+12. Microsoft / Outlook OAuth using the same auth store

@@ -140,8 +140,8 @@ def main() -> None:
             "Built-in tools need no extra keys. Chat uses the same LLM. "
             "Memory and automations persist locally. Computer use can open "
             "public web pages. Mail and calendar use Google OAuth "
-            "(--connect google). MCP servers come from mcp.json. "
-            "A localhost web UI is python main.py --serve."
+            "(Connect Google in --serve, or --connect google). MCP servers "
+            "come from mcp.json. A localhost web UI is python main.py --serve."
         )
         print("Type exit to leave.")
         orchestrator.run()

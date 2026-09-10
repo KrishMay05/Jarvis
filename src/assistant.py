@@ -92,10 +92,10 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
         Name="Mail Agent",
         Description=(
             "Reads Gmail (inbox, unread, search) after Google is connected "
-            "with `python main.py --connect google`. Use when the user asks "
-            "about email, inbox, unread mail, or a message from someone. "
-            "OAuth login — not a second AI key. If Google is not connected, "
-            "tell them to run --connect google."
+            "with `python main.py --connect google` or Connect Google in the "
+            "localhost web UI. Use when the user asks about email, inbox, "
+            "unread mail, or a message from someone. OAuth login — not a "
+            "second AI key. If Google is not connected, tell them to connect."
         ),
         Tools=[MailTool(auth)],
         Model=model,
@@ -105,10 +105,10 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
         Name="Calendar Agent",
         Description=(
             "Reads upcoming Google Calendar events after Google is connected "
-            "with `python main.py --connect google`. Use when the user asks "
-            "what's on the calendar, upcoming meetings, or today's agenda. "
-            "OAuth login — not a second AI key. If Google is not connected, "
-            "tell them to run --connect google."
+            "with `python main.py --connect google` or Connect Google in the "
+            "localhost web UI. Use when the user asks what's on the calendar, "
+            "upcoming meetings, or today's agenda. OAuth login — not a second "
+            "AI key. If Google is not connected, tell them to connect."
         ),
         Tools=[CalendarTool(auth)],
         Model=model,
@@ -159,4 +159,5 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
         closables=closables,
         memory_store=memory,
         automation_store=automations,
+        auth_store=auth,
     )

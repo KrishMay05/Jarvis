@@ -57,7 +57,8 @@ def missing_client_id_message() -> str:
         "Gmail API and Google Calendar API, then put the client id in .env:\n"
         "  GOOGLE_OAUTH_CLIENT_ID=....apps.googleusercontent.com\n"
         "Optional for web clients: GOOGLE_OAUTH_CLIENT_SECRET=...\n"
-        "Then run: python main.py --connect google"
+        "Then run: python main.py --connect google\n"
+        "or click Connect Google in the localhost web UI (python main.py --serve)."
     )
 
 
