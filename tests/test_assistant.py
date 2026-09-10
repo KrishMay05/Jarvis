@@ -20,6 +20,8 @@ def test_build_orchestrator_includes_research_weather_time_and_chat():
         }
         assert orchestrator.memory_store is not None
         assert orchestrator.automation_store is not None
+        assert orchestrator.auth_store is not None
+        assert by_name["Mail Agent"].tools[0].store is orchestrator.auth_store
         assert by_name["Mail Agent"].tools[0].name() == "mail"
         assert by_name["Calendar Agent"].tools[0].name() == "calendar"
         for name, agent in by_name.items():

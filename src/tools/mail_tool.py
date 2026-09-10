@@ -26,8 +26,8 @@ class MailTool(Tool):
     def description(self) -> str:
         return (
             "Read recent Gmail (readonly) after the user connects Google with "
-            "`python main.py --connect google`. OAuth — not a second AI key. "
-            "Args: inbox; unread; search from:ada; list."
+            "`python main.py --connect google` or Connect Google in the web UI. "
+            "OAuth — not a second AI key. Args: inbox; unread; search from:ada; list."
         )
 
     def use(self, args) -> str:

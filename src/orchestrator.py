@@ -21,6 +21,7 @@ class AgentOrchestrator:
         closables: list | None = None,
         memory_store=None,
         automation_store=None,
+        auth_store=None,
     ):
         self.agents = agents
         self.memory: list[str] = []
@@ -29,6 +30,7 @@ class AgentOrchestrator:
         self._closables = list(closables or [])
         self.memory_store = memory_store
         self.automation_store = automation_store
+        self.auth_store = auth_store
 
     def json_parser(self, input_string: str):
         return parse_llm_json(input_string)
@@ -67,7 +69,7 @@ class AgentOrchestrator:
                 - Use the Memory Agent to remember, forget, or recall lasting personal facts. Also use it when the user states a new lasting fact (name, home city, units, preferences).
                 - Use the Automation Agent to schedule reminders, recurring research/weather prompts, list jobs, or cancel them. Phrases like remind me, every morning, daily at 8am, or cancel reminder belong here.
                 - Use the Computer Agent to open a public URL, read a web page, list links, or follow a link. Phrases like open, browse, go to, visit, what's on this page, or a pasted http(s) URL belong here. If the user names a site without a scheme (python.org), rewrite the input with https://. Private/local addresses cannot be opened.
-                - Use the Mail Agent for inbox, unread mail, or searching email. Google must already be connected (python main.py --connect google). This is OAuth, not a second AI key.
+                - Use the Mail Agent for inbox, unread mail, or searching email. Google must already be connected (web UI Connect Google, or python main.py --connect google). This is OAuth, not a second AI key.
                 - Use the Calendar Agent for upcoming events, today's agenda, or meetings. Same Google OAuth connection as mail.
                 - When the user omits a detail that a durable memory covers (for example home city), rewrite the specialist input with that detail.
                 - Prefer the Research Agent for encyclopedic questions with no URL. Prefer the Computer Agent when the user wants the live contents of a specific page.

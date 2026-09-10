@@ -37,8 +37,9 @@ class CalendarTool(Tool):
     def description(self) -> str:
         return (
             "Read upcoming Google Calendar events (readonly) after the user "
-            "connects Google with `python main.py --connect google`. OAuth — "
-            "not a second AI key. Args: upcoming; today; search standup."
+            "connects Google with `python main.py --connect google` or Connect "
+            "Google in the web UI. OAuth — not a second AI key. Args: upcoming; "
+            "today; search standup."
         )
 
     def use(self, args) -> str:

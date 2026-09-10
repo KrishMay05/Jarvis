@@ -102,7 +102,7 @@ def describe_runtime(settings: LLMSettings | None = None) -> str:
         "research (Wikipedia + DuckDuckGo), chat (your LLM), "
         "memory (local file), automations (local schedule), "
         "computer (public web pages), mail/calendar (Google OAuth), "
-        "web UI (localhost --serve)\n"
+        "web UI (localhost --serve; Connect Google in the sidebar)\n"
         f"{mcp_status_line()}\n"
         f"{memory_status_line()}\n"
         f"{automation_status_line()}\n"

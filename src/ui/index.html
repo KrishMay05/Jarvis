@@ -175,6 +175,21 @@
         cursor: pointer;
       }
       button:disabled { opacity: 0.45; cursor: not-allowed; }
+      .auth-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      button.secondary, button.ghost {
+        background: transparent;
+        color: var(--gold-2);
+        border: 1px solid var(--line);
+        padding: 8px 12px;
+        font-size: 0.78rem;
+        font-weight: 650;
+      }
+      button.ghost { color: var(--muted); }
       .hint { color: var(--muted); font-size: 0.78rem; padding: 0 16px 12px; }
       @media (max-width: 860px) {
         .layout { grid-template-columns: 1fr; }
@@ -204,6 +219,11 @@
           <p id="automations" class="meta"></p>
           <h2>Auth</h2>
           <p id="auth" class="meta"></p>
+          <div class="auth-actions">
+            <button type="button" id="connect-google" class="secondary" disabled>Connect Google</button>
+            <button type="button" id="disconnect-google" class="ghost" disabled>Disconnect</button>
+          </div>
+          <p id="auth-hint" class="meta"></p>
           <h2>MCP</h2>
           <p id="mcp" class="meta"></p>
         </aside>
@@ -213,7 +233,7 @@
             <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox"></textarea>
             <button id="send" type="submit">Send</button>
           </form>
-          <div class="hint">Localhost only. One AI key in .env. Google mail/calendar via --connect google.</div>
+          <div class="hint">Localhost only. One AI key in .env. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
         </section>
       </div>
     </div>
@@ -222,6 +242,8 @@
       const pill = document.getElementById("pill");
       const send = document.getElementById("send");
       const prompt = document.getElementById("prompt");
+      const connectBtn = document.getElementById("connect-google");
+      const disconnectBtn = document.getElementById("disconnect-google");
       let ready = false;
 
       function add(text, cls) {
@@ -244,6 +266,7 @@
         document.getElementById("automations").textContent = data.automations || "";
         document.getElementById("auth").textContent = data.auth || "";
         document.getElementById("mcp").textContent = data.mcp || "";
+        renderAuth(data);
         const tools = document.getElementById("tools");
         tools.innerHTML = "";
         (data.tools || []).forEach((name) => {
@@ -254,10 +277,27 @@
         });
         if (!log.childElementCount) {
           if (ready) {
-            add("At your service. Weather, research, memory, automations, computer use, mail, and calendar — one AI key.", "jarvis");
+            add("At your service. Weather, research, memory, automations, computer use, mail, and calendar — one AI key. Connect Google in the sidebar when you want inbox and calendar.", "jarvis");
           } else {
             add(data.error || "Drop one AI API key into .env, then restart python main.py --serve.", "system");
+            add("You can still connect Google for mail and calendar without an AI key.", "system");
           }
+        }
+      }
+
+      function renderAuth(data) {
+        const google = data.google || {};
+        const hint = document.getElementById("auth-hint");
+        connectBtn.disabled = !google.configured || Boolean(google.connected);
+        disconnectBtn.disabled = !google.connected;
+        if (!google.configured) {
+          hint.textContent = "Add GOOGLE_OAUTH_CLIENT_ID to .env, then restart --serve. OAuth is not a second AI key.";
+        } else if (google.connected) {
+          hint.textContent = google.email
+            ? ("Connected as " + google.email + ". Mail and calendar use this login.")
+            : "Google is connected. Mail and calendar use this login.";
+        } else {
+          hint.textContent = "Connect Google here — no extra AI key. Chat can stay paused.";
         }
       }
 
@@ -285,6 +325,35 @@
           add("Could not reach the local Jarvis server.", "system");
         }
         send.disabled = !ready;
+        refreshStatus();
+      });
+
+      connectBtn.addEventListener("click", async () => {
+        connectBtn.disabled = true;
+        try {
+          const res = await fetch("/api/auth/google/connect", { method: "POST" });
+          const data = await res.json();
+          if (!res.ok || !data.auth_url) {
+            add(data.error || "Could not start Google login.", "system");
+            refreshStatus();
+            return;
+          }
+          window.location.href = data.auth_url;
+        } catch (err) {
+          add("Could not start Google login.", "system");
+          refreshStatus();
+        }
+      });
+
+      disconnectBtn.addEventListener("click", async () => {
+        disconnectBtn.disabled = true;
+        try {
+          const res = await fetch("/api/auth/google/disconnect", { method: "POST" });
+          const data = await res.json();
+          add(data.message || "Disconnected Google.", "system");
+        } catch (err) {
+          add("Could not disconnect Google.", "system");
+        }
         refreshStatus();
       });
 
