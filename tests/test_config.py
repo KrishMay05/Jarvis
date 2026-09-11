@@ -1,6 +1,6 @@
 import pytest
 
-from src.config import MissingAPIKeyError, describe_runtime, get_llm_settings
+from src.config import MissingAPIKeyError, describe_runtime, get_llm_settings, list_llm_settings
 
 
 def test_detects_gemini_key(monkeypatch):
@@ -108,3 +108,55 @@ def test_describe_runtime_mentions_one_key_tools(monkeypatch):
     assert "Memory:" in text
     assert "Automations:" in text
     assert "Auth:" in text
+
+
+def test_list_llm_settings_one_key_is_enough(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-only")
+    configured = list_llm_settings()
+    assert [item.provider for item in configured] == ["openai"]
+    assert get_llm_settings().provider == "openai"
+
+
+def test_list_llm_settings_extra_keys_are_backups(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-primary")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-backup")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-backup")
+    configured = list_llm_settings()
+    assert [item.provider for item in configured] == ["gemini", "openai", "anthropic"]
+    assert get_llm_settings().provider == "gemini"
+    assert configured[1].model == "gpt-4o-mini"
+    assert configured[2].model == "claude-sonnet-4-5"
+
+
+def test_explicit_provider_stays_primary_when_other_keys_exist(monkeypatch):
+    monkeypatch.setenv("JARVIS_LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-primary")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-backup")
+    configured = list_llm_settings()
+    assert [item.provider for item in configured] == ["anthropic", "gemini"]
+
+
+def test_model_override_applies_only_to_primary(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-primary")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-backup")
+    monkeypatch.setenv("JARVIS_MODEL", "gemini-2.5-flash")
+    configured = list_llm_settings()
+    assert configured[0].model == "gemini-2.5-flash"
+    assert configured[1].model == "gpt-4o-mini"
+
+
+def test_shared_jarvis_api_key_does_not_duplicate_provider(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+    monkeypatch.setenv("JARVIS_API_KEY", "sk-also-openai")
+    configured = list_llm_settings()
+    assert [item.provider for item in configured] == ["openai"]
+    assert configured[0].api_key == "sk-openai"
+
+
+def test_describe_runtime_mentions_optional_fallback(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-backup")
+    text = describe_runtime()
+    assert "Fallback LLM: openai (gpt-4o-mini)" in text
+    assert "optional extra key" in text.lower()
+    assert "none required" in text.lower()

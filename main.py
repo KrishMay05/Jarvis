@@ -138,10 +138,12 @@ def main() -> None:
         print(f"Jarvis online · {settings.summary()}")
         print(
             "Built-in tools need no extra keys. Chat uses the same LLM. "
-            "Memory and automations persist locally. Computer use can open "
-            "public web pages. Mail and calendar use Google OAuth "
-            "(Connect Google in --serve, or --connect google). MCP servers "
-            "come from mcp.json. A localhost web UI is python main.py --serve."
+            "A second Gemini/OpenAI/Anthropic key is optional backup if the "
+            "primary provider fails. Memory and automations persist locally. "
+            "Computer use can open public web pages. Mail and calendar use "
+            "Google OAuth (Connect Google in --serve, or --connect google). "
+            "MCP servers come from mcp.json. A localhost web UI is "
+            "python main.py --serve."
         )
         print("Type exit to leave.")
         orchestrator.run()
