@@ -27,13 +27,15 @@ OPENAI_API_KEY=your-openai-key
 ANTHROPIC_API_KEY=your-anthropic-key
 ```
 
-Optional overrides: `JARVIS_LLM_PROVIDER=gemini|openai|anthropic`, `JARVIS_MODEL=...`, or a generic `JARVIS_API_KEY`. If several provider keys are set, Gemini wins unless you set `JARVIS_LLM_PROVIDER`.
+Optional overrides: `JARVIS_LLM_PROVIDER=gemini|openai|anthropic`, `JARVIS_MODEL=...`, or a generic `JARVIS_API_KEY`. If several provider keys are set, Gemini is the primary unless you set `JARVIS_LLM_PROVIDER`. Extra keys are optional backups — if the primary provider is down, rate-limited, or rejects the key, Jarvis fails over automatically. One key is still enough. Set `JARVIS_LLM_FAILOVER=0` to disable that.
 
-Confirm what Jarvis detected:
+Confirm what Jarvis detected (including any optional backup LLM):
 
 ```bash
 python main.py --status
 ```
+
+`--status` does not need a live model call. If two provider keys are in `.env`, the banner lists a **Fallback LLM** used only when the primary fails.
 
 If a Gemini key was ever committed to git history, rotate it in Google AI Studio and use the new value.
 
@@ -71,7 +73,7 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 
 | Capability | How |
 | --- | --- |
-| Chat / planning | Gemini, OpenAI, or Anthropic |
+| Chat / planning | Gemini, OpenAI, or Anthropic (optional extra key is a backup if the first provider fails) |
 | General conversation | Chat Agent (same key — greetings, writing, math, advice) |
 | Weather | [wttr.in](https://wttr.in) (no extra key) |
 | Time | Local timezone database |
@@ -192,7 +194,7 @@ Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / 
 - No extra API key and no cloud UI vendor
 - Binds to loopback so the assistant is not on your LAN
 - Works without a key too: the page explains what to put in `.env`, chat stays paused, and Google login still works
-- Status/health are JSON at `/api/status` and `/api/health`
+- Status/health are JSON at `/api/status` and `/api/health` (including optional LLM fallbacks)
 - Google OAuth callback is `/oauth/google/callback` on the same localhost server
 
 ## Development
@@ -211,8 +213,8 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 - `src/auth/` — local OAuth token store and Google mail/calendar clients
 - `src/automation/` — local job store, schedule parser, and due-job runner
 - `src/computer/` — public-web fetch, HTML extract, and in-process link following
-- `src/config.py` — one-key provider detection
-- `src/llm.py` — Gemini / OpenAI / Anthropic client
+- `src/config.py` — one-key provider detection (extra keys are optional LLM backups)
+- `src/llm.py` — Gemini / OpenAI / Anthropic client with automatic provider failover
 - `src/mcp/` — stdio MCP client and `mcp.json` loader
 - `src/memory/` — local persistent facts and recent turns
 - `src/orchestrator.py` — routes a request, loops specialists, then answers
@@ -233,6 +235,6 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 7. ~~OAuth for mail / calendar~~ (Google PKCE + localhost; readonly Gmail and Calendar)
 8. ~~Thin local web UI~~ (`python main.py --serve` on 127.0.0.1)
 9. ~~Connect Google from the web UI~~ (same localhost server as the OAuth callback)
-10. Desktop / JS-capable computer use (Playwright or screenshot+input)
-11. Provider fallback if the first AI key fails
+10. ~~Provider fallback if the first AI key fails~~ (optional extra Gemini/OpenAI/Anthropic key; one key still enough)
+11. Desktop / JS-capable computer use (Playwright or screenshot+input)
 12. Microsoft / Outlook OAuth using the same auth store

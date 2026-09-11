@@ -1,7 +1,9 @@
 from unittest.mock import Mock
 
+import pytest
+
 from src.config import LLMSettings
-from src.llm import _query_anthropic, _query_gemini, _query_openai, query_llm
+from src.llm import _query_anthropic, _query_gemini, _query_openai, query_llm, reset_failover_state
 
 
 def test_query_llm_dispatches_to_openai(monkeypatch):
@@ -116,3 +118,113 @@ def test_query_gemini_sends_generate_content(monkeypatch):
     result = _query_gemini(settings, "ping", "gemini-2.0-flash")
     assert result == "hello from gemini"
     models.generate_content.assert_called_once()
+
+
+def test_query_llm_fails_over_to_backup_provider(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-dead")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-backup")
+    calls: list[str] = []
+
+    def boom(settings, prompt, model):
+        calls.append(f"gemini:{model}")
+        raise RuntimeError("429 rate limited")
+
+    def ok(settings, prompt, model):
+        calls.append(f"openai:{model}")
+        return f"recovered:{prompt}"
+
+    monkeypatch.setattr("src.llm._query_gemini", boom)
+    monkeypatch.setattr("src.llm._query_openai", ok)
+    assert query_llm("ping") == "recovered:ping"
+    assert calls == ["gemini:gemini-2.0-flash", "openai:gpt-4o-mini"]
+
+
+def test_query_llm_uses_backup_model_not_primary_override(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-dead")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-backup")
+    seen: list[str] = []
+
+    def boom(settings, prompt, model):
+        raise RuntimeError("overloaded")
+
+    def ok(settings, prompt, model):
+        seen.append(model)
+        return "ok"
+
+    monkeypatch.setattr("src.llm._query_gemini", boom)
+    monkeypatch.setattr("src.llm._query_openai", ok)
+    assert query_llm("ping", model="gemini-2.5-flash") == "ok"
+    assert seen == ["gpt-4o-mini"]
+
+
+def test_query_llm_sticky_prefers_last_working_provider(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-flaky")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-backup")
+    gemini_calls = {"n": 0}
+    openai_calls = {"n": 0}
+
+    def boom(settings, prompt, model):
+        gemini_calls["n"] += 1
+        raise RuntimeError("503 unavailable")
+
+    def ok(settings, prompt, model):
+        openai_calls["n"] += 1
+        return "ok"
+
+    monkeypatch.setattr("src.llm._query_gemini", boom)
+    monkeypatch.setattr("src.llm._query_openai", ok)
+    assert query_llm("one") == "ok"
+    assert query_llm("two") == "ok"
+    assert gemini_calls["n"] == 1
+    assert openai_calls["n"] == 2
+    reset_failover_state()
+
+
+def test_query_llm_does_not_failover_when_disabled(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-dead")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-backup")
+    monkeypatch.setenv("JARVIS_LLM_FAILOVER", "0")
+    openai_calls = {"n": 0}
+
+    def boom(settings, prompt, model):
+        raise RuntimeError("quota")
+
+    def ok(settings, prompt, model):
+        openai_calls["n"] += 1
+        return "should-not-run"
+
+    monkeypatch.setattr("src.llm._query_gemini", boom)
+    monkeypatch.setattr("src.llm._query_openai", ok)
+    with pytest.raises(RuntimeError, match="quota"):
+        query_llm("ping")
+    assert openai_calls["n"] == 0
+
+
+def test_query_llm_reports_every_provider_when_all_fail(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-dead")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-dead")
+
+    monkeypatch.setattr(
+        "src.llm._query_gemini",
+        lambda settings, prompt, model: (_ for _ in ()).throw(RuntimeError("gemini down")),
+    )
+    monkeypatch.setattr(
+        "src.llm._query_openai",
+        lambda settings, prompt, model: (_ for _ in ()).throw(RuntimeError("openai down")),
+    )
+    with pytest.raises(RuntimeError, match="All configured LLM providers failed") as info:
+        query_llm("ping")
+    message = str(info.value)
+    assert "gemini: gemini down" in message
+    assert "openai: openai down" in message
+
+
+def test_query_llm_single_key_still_raises_original_error(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-only")
+
+    def boom(settings, prompt, model):
+        raise RuntimeError("invalid api key")
+
+    monkeypatch.setattr("src.llm._query_openai", boom)
+    with pytest.raises(RuntimeError, match="invalid api key"):
+        query_llm("ping")

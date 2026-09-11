@@ -233,7 +233,7 @@
             <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox"></textarea>
             <button id="send" type="submit">Send</button>
           </form>
-          <div class="hint">Localhost only. One AI key in .env. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
+          <div class="hint">Localhost only. One AI key in .env is enough. A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
         </section>
       </div>
     </div>
@@ -258,7 +258,14 @@
         const res = await fetch("/api/status");
         const data = await res.json();
         ready = Boolean(data.ready);
-        pill.textContent = ready ? (data.llm && data.llm.summary) || "Online" : "Needs API key";
+        const fallbacks = (data.llm && data.llm.fallbacks) || [];
+        if (!ready) {
+          pill.textContent = "Needs API key";
+        } else if (fallbacks.length) {
+          pill.textContent = ((data.llm && data.llm.summary) || "Online") + " · fallback ready";
+        } else {
+          pill.textContent = (data.llm && data.llm.summary) || "Online";
+        }
         pill.classList.toggle("bad", !ready);
         send.disabled = !ready;
         document.getElementById("llm").textContent = data.error || (data.runtime || "Ready.");

@@ -26,7 +26,7 @@ from src.auth.oauth import (
 )
 from src.auth.store import AuthStore, auth_status_line
 from src.automation.store import AutomationStore, automation_status_line
-from src.config import LLMSettings, MissingAPIKeyError, describe_runtime
+from src.config import LLMSettings, MissingAPIKeyError, describe_runtime, list_llm_settings
 from src.mcp.config import mcp_status_line
 from src.memory.store import MemoryStore, memory_status_line
 
@@ -123,6 +123,7 @@ class JarvisWebApp:
                 "provider": self.settings.provider,
                 "model": self.settings.model,
                 "summary": self.settings.summary(),
+                "fallbacks": _fallback_summaries(self.settings),
             }
             try:
                 runtime = describe_runtime(self.settings)
@@ -335,6 +336,22 @@ def _public_url(host: str, port: int) -> str:
 
 def _index_html() -> bytes:
     return _INDEX_PATH.read_bytes()
+
+
+def _fallback_summaries(primary: LLMSettings) -> list[dict]:
+    try:
+        configured = list_llm_settings()
+    except MissingAPIKeyError:
+        return []
+    return [
+        {
+            "provider": item.provider,
+            "model": item.model,
+            "summary": item.summary(),
+        }
+        for item in configured
+        if item.provider != primary.provider
+    ]
 
 
 def _resolve_auth_store(orchestrator, auth_store: AuthStore | None) -> AuthStore:

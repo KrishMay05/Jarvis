@@ -59,7 +59,23 @@ def test_status_with_settings_lists_llm():
     payload = json.loads(app.dispatch("GET", "/api/status").body)
     assert payload["ready"] is True
     assert payload["llm"]["provider"] == "gemini"
+    assert payload["llm"]["fallbacks"] == []
     assert "web UI" in payload["runtime"]
+
+
+def test_status_lists_optional_llm_fallbacks(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-primary")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-backup")
+    settings = LLMSettings(provider="gemini", api_key="gemini-primary", model="gemini-2.0-flash")
+    app = JarvisWebApp(orchestrator=FakeOrchestrator(), settings=settings)
+    payload = json.loads(app.dispatch("GET", "/api/status").body)
+    assert payload["llm"]["fallbacks"] == [
+        {"provider": "openai", "model": "gpt-4o-mini", "summary": "openai (gpt-4o-mini)"}
+    ]
+    assert "Fallback LLM: openai (gpt-4o-mini)" in payload["runtime"]
+    html = app.dispatch("GET", "/").body.decode("utf-8")
+    assert "fallback ready" in html
+    assert "optional backup" in html
 
 
 def test_chat_requires_key():
