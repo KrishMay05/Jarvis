@@ -145,7 +145,7 @@ def describe_runtime(settings: LLMSettings | None = None) -> str:
     return (
         f"LLM: {settings.summary()}{fallback_line}\n"
         "Tools: weather (wttr.in), time (local clock), "
-        "research (Wikipedia + DuckDuckGo), chat (your LLM), "
+        "research (Wikipedia + public web), chat (your LLM), "
         "memory (local file), automations (local schedule), "
         "computer (public web pages), mail/calendar (Google OAuth), "
         "web UI (localhost --serve; Connect Google in the sidebar)\n"

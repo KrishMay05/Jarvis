@@ -44,7 +44,8 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
     research_agent = Agent(
         Name="Research Agent",
         Description=(
-            "Looks up facts, encyclopedic background, and public-web summaries. "
+            "Looks up facts, encyclopedic background, and public-web summaries "
+            "via Wikipedia, a named public website, DuckDuckGo, and Stack Overflow. "
             "Use for questions that need research rather than weather or time."
         ),
         Tools=[ResearchTool()],
