@@ -77,7 +77,7 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | General conversation | Chat Agent (same key — greetings, writing, math, advice) |
 | Weather | [wttr.in](https://wttr.in) (no extra key) |
 | Time | Local timezone database |
-| Research | Wikipedia + DuckDuckGo Instant Answers (no extra key) |
+| Research | Wikipedia, named public sites, DuckDuckGo, then Stack Overflow (no extra key) |
 | Memory | Local `~/.jarvis/memory.json` — remember facts across sessions (no extra key) |
 | Automations | Local `~/.jarvis/automations.json` — reminders and recurring prompts (no extra key) |
 | Computer use | Open public http(s) pages, read the text, follow on-page links (no extra key) |
@@ -130,6 +130,18 @@ Reminders and recurring research/weather checks live in a local JSON file. Still
 
 No extra vendor account. Recurring jobs use `every 30 minutes` or `daily at 8:00`.
 
+## Research
+
+Encyclopedic questions should work with the same AI key — no Brave, SerpAPI, or search-vendor account.
+
+1. Wikipedia first (several search hits; disambiguation pages are skipped)
+2. If you named a public site (`wttr.in`, `https://example.com/docs`), Jarvis reads that page with the same SSRF-safe browser as computer use
+3. DuckDuckGo Instant Answers when those miss
+4. A public DuckDuckGo HTML search when Instant Answers are empty, plus a short extract from the top public page
+5. Stack Overflow excerpts for how-to questions (no extra key; used when search pages are empty or blocked)
+
+If every source misses, Jarvis says so instead of inventing a citation.
+
 ## Computer use
 
 Jarvis can operate a **local public-web browser** with the same AI key — no Playwright account, Browserbase, or extra vendor.
@@ -139,7 +151,7 @@ Jarvis can operate a **local public-web browser** with the same AI key — no Pl
 - Follow-up **follow** / **click** uses links from the last opened page in this process
 - `python main.py --browse https://example.com` reads a page without an API key
 - Only public `http`/`https` URLs are allowed. Localhost, private LAN, and cloud-metadata addresses are blocked
-- JavaScript-heavy apps may return little text; encyclopedic questions without a URL still go to the Research Agent
+- JavaScript-heavy apps may return little text; encyclopedic questions without a URL still go to the Research Agent, which can also fall back to a public web search
 
 No extra vendor account. This is the first computer-use layer; desktop mouse/keyboard control can come later.
 
@@ -236,5 +248,6 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 8. ~~Thin local web UI~~ (`python main.py --serve` on 127.0.0.1)
 9. ~~Connect Google from the web UI~~ (same localhost server as the OAuth callback)
 10. ~~Provider fallback if the first AI key fails~~ (optional extra Gemini/OpenAI/Anthropic key; one key still enough)
-11. Desktop / JS-capable computer use (Playwright or screenshot+input)
-12. Microsoft / Outlook OAuth using the same auth store
+11. ~~Richer research when Instant Answers are empty~~ (Wikipedia candidates + public web search, still no extra key)
+12. Desktop / JS-capable computer use (Playwright or screenshot+input)
+13. Microsoft / Outlook OAuth using the same auth store
