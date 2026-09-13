@@ -7,6 +7,8 @@ from src.auth.store import AuthAccount, AuthStore
 from src.config import LLMSettings, describe_runtime
 from src.ui.server import MAX_BODY_BYTES, JarvisWebApp
 
+PASTE_KEY = "sk-ui-paste-secret-do-not-echo"
+
 
 class FakeOrchestrator:
     def __init__(self):
@@ -33,7 +35,10 @@ def test_index_is_self_contained_html():
     assert "/api/chat" in html
     assert "/api/status" in html
     assert "/api/auth/google/connect" in html
+    assert "/api/key" in html
     assert "Connect Google" in html
+    assert "Save key" in html
+    assert "Paste Gemini" in html
     assert "http://" not in html.split("<style>")[1].split("</style>")[0]
 
 
@@ -48,6 +53,7 @@ def test_status_without_key_is_not_ready():
     assert payload["google"]["configured"] is False
     assert payload["google"]["connected"] is False
     assert "localhost" in payload["bind"]
+    assert payload["can_install_key"] is True
 
 
 def test_status_with_settings_lists_llm():
@@ -169,6 +175,7 @@ def test_describe_runtime_mentions_web_ui(monkeypatch):
     text = describe_runtime()
     assert "web UI" in text
     assert "--serve" in text
+    assert "paste an AI key" in text
     assert "Connect Google" in text
 
 
@@ -281,6 +288,156 @@ def test_disconnect_google_from_ui(tmp_path):
     assert payload["google"]["connected"] is False
     assert "Disconnected" in payload["message"]
     assert store.get("google") is None
+
+
+def test_install_key_unlocks_chat_without_restart(tmp_path):
+    env_path = tmp_path / "from-ui.env"
+    built: list[LLMSettings] = []
+
+    def factory(settings: LLMSettings):
+        built.append(settings)
+        return FakeOrchestrator()
+
+    app = JarvisWebApp(
+        missing_key="No AI API key found.",
+        orchestrator_factory=factory,
+        env_path=env_path,
+    )
+    assert app.ready is False
+    response = app.dispatch(
+        "POST",
+        "/api/key",
+        json.dumps({"api_key": PASTE_KEY, "provider": "auto"}).encode(),
+    )
+    payload = json.loads(response.body)
+    assert response.status == 200
+    assert payload["ok"] is True
+    assert payload["ready"] is True
+    assert payload["llm"]["provider"] == "openai"
+    assert PASTE_KEY not in response.body.decode()
+    assert PASTE_KEY not in json.dumps(payload)
+    assert "no restart" in payload["message"].lower()
+    assert app.ready is True
+    assert built and built[0].api_key == PASTE_KEY
+    assert env_path.exists()
+    saved = env_path.read_text(encoding="utf-8")
+    assert f"OPENAI_API_KEY={PASTE_KEY}" in saved
+    assert "JARVIS_LLM_PROVIDER=openai" in saved
+
+    status = json.loads(app.dispatch("GET", "/api/status").body)
+    assert status["ready"] is True
+    assert PASTE_KEY not in json.dumps(status)
+    assert status["llm"]["summary"] == "openai (gpt-4o-mini)"
+
+    chat = app.dispatch("POST", "/api/chat", json.dumps({"message": "hello"}).encode())
+    assert chat.status == 200
+    assert json.loads(chat.body)["reply"] == "heard:hello"
+
+
+def test_install_key_rejects_empty_and_placeholder():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    empty = app.dispatch("POST", "/api/key", b'{"api_key":"   "}')
+    assert empty.status == 400
+    assert "Paste an AI API key" in json.loads(empty.body)["error"]
+    placeholder = app.dispatch("POST", "/api/key", b'{"api_key":"your-gemini-key"}')
+    assert placeholder.status == 400
+    bad = app.dispatch("POST", "/api/key", b"not-json")
+    assert bad.status == 400
+
+
+def test_install_key_refuses_non_loopback_bind():
+    app = JarvisWebApp(
+        missing_key="No AI API key found.",
+        public_base="http://192.168.1.20:8787",
+    )
+    response = app.dispatch(
+        "POST",
+        "/api/key",
+        json.dumps({"api_key": PASTE_KEY}).encode(),
+    )
+    payload = json.loads(response.body)
+    assert response.status == 403
+    assert "localhost" in payload["error"]
+    assert app.ready is False
+
+
+def test_install_key_replaces_existing_orchestrator(tmp_path):
+    first = FakeOrchestrator()
+    first.closed = False
+
+    def close() -> None:
+        first.closed = True
+
+    first.close = close
+    built: list[FakeOrchestrator] = []
+
+    def factory(settings: LLMSettings):
+        nxt = FakeOrchestrator()
+        nxt.settings = settings
+        built.append(nxt)
+        return nxt
+
+    app = JarvisWebApp(
+        orchestrator=first,
+        settings=LLMSettings(provider="gemini", api_key="old-key-value", model="gemini-2.0-flash"),
+        orchestrator_factory=factory,
+        env_path=tmp_path / "swap.env",
+    )
+    response = app.dispatch(
+        "POST",
+        "/api/key",
+        json.dumps({"api_key": "sk-ant-replacement-key", "provider": "anthropic"}).encode(),
+    )
+    assert response.status == 200
+    assert first.closed is True
+    assert app.orchestrator is built[0]
+    assert built[0].settings.provider == "anthropic"
+    assert json.loads(app.dispatch("GET", "/api/status").body)["llm"]["provider"] == "anthropic"
+
+
+def test_http_install_key_roundtrip(tmp_path):
+    env_path = tmp_path / "http.env"
+
+    def factory(settings: LLMSettings):
+        return FakeOrchestrator()
+
+    app = JarvisWebApp(
+        missing_key="No AI API key found.",
+        orchestrator_factory=factory,
+        env_path=env_path,
+    )
+    httpd = app.make_server("127.0.0.1", 0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = httpd.server_address[1]
+        app.public_base = f"http://127.0.0.1:{port}"
+        req = Request(
+            f"http://127.0.0.1:{port}/api/key",
+            data=json.dumps({"api_key": PASTE_KEY}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(req, timeout=5) as resp:
+            payload = json.loads(resp.read())
+        assert payload["ready"] is True
+        assert PASTE_KEY not in json.dumps(payload)
+        with urlopen(f"http://127.0.0.1:{port}/api/health", timeout=5) as resp:
+            health = json.loads(resp.read())
+        assert health == {"ok": True, "ready": True}
+        chat_req = Request(
+            f"http://127.0.0.1:{port}/api/chat",
+            data=json.dumps({"message": "ping"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(chat_req, timeout=5) as resp:
+            chat = json.loads(resp.read())
+        assert chat["reply"] == "heard:ping"
+        assert env_path.exists()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 def test_http_google_connect_roundtrip(monkeypatch):

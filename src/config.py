@@ -14,7 +14,9 @@ fail over to it when the primary provider is down — still no tool keys.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
+from pathlib import Path
 
 
 SUPPORTED_PROVIDERS = ("gemini", "openai", "anthropic")
@@ -39,6 +41,29 @@ _KEY_PREFIXES = (
 
 USER_AGENT = "JarvisPersonalAssistant/0.9 (+https://github.com/KrishMay05/Jarvis)"
 
+_MIN_KEY_LEN = 12
+_MAX_KEY_LEN = 512
+_PLACEHOLDER_KEYS = frozenset(
+    {
+        "your-gemini-key",
+        "your-openai-key",
+        "your-anthropic-key",
+        "your-api-key",
+        "changeme",
+        "replace-me",
+        "paste-here",
+        "xxx",
+        "xxxx",
+        "todo",
+        "...",
+        "sk-...",
+        "sk-ant-...",
+    }
+)
+_ENV_ASSIGNMENT = re.compile(
+    r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$"
+)
+
 
 @dataclass(frozen=True)
 class LLMSettings:
@@ -52,6 +77,10 @@ class LLMSettings:
 
 class MissingAPIKeyError(RuntimeError):
     """Raised when no supported LLM API key is configured."""
+
+
+class InvalidAPIKeyError(ValueError):
+    """Raised when a pasted key is empty or not plausible."""
 
 
 def get_llm_settings() -> LLMSettings:
@@ -148,7 +177,7 @@ def describe_runtime(settings: LLMSettings | None = None) -> str:
         "research (Wikipedia + public web), chat (your LLM), "
         "memory (local file), automations (local schedule), "
         "computer (public web pages), mail/calendar (Google OAuth), "
-        "web UI (localhost --serve; Connect Google in the sidebar)\n"
+        "web UI (localhost --serve; paste an AI key or Connect Google)\n"
         f"{mcp_status_line()}\n"
         f"{memory_status_line()}\n"
         f"{automation_status_line()}\n"
@@ -188,12 +217,156 @@ def _infer_provider(api_key: str) -> str:
     return "gemini"
 
 
+def infer_provider(api_key: str) -> str:
+    """Guess gemini / openai / anthropic from a key prefix."""
+    return _infer_provider((api_key or "").strip())
+
+
+def provider_key_var(provider: str) -> str:
+    """Canonical .env variable for a supported provider."""
+    return _PROVIDER_KEY_VARS[provider][0]
+
+
+def env_file_path() -> Path:
+    """Where a pasted key is persisted (gitignored .env)."""
+    override = (os.getenv("JARVIS_ENV_PATH") or "").strip()
+    if override:
+        return Path(override).expanduser()
+    return Path.cwd() / ".env"
+
+
+def normalize_api_key(api_key: str) -> str:
+    """Strip and reject empty or placeholder keys. Never logs the value."""
+    key = (api_key or "").strip()
+    if not key:
+        raise InvalidAPIKeyError("Paste an AI API key first.")
+    if any(ch.isspace() for ch in key):
+        raise InvalidAPIKeyError("That does not look like an API key.")
+    if len(key) < _MIN_KEY_LEN:
+        raise InvalidAPIKeyError("That key is too short to be a real API key.")
+    if len(key) > _MAX_KEY_LEN:
+        raise InvalidAPIKeyError("That key is too long.")
+    if key.lower() in _PLACEHOLDER_KEYS:
+        raise InvalidAPIKeyError("Paste a real API key, not a placeholder.")
+    return key
+
+
+def resolve_provider(api_key: str, provider: str | None = None) -> str:
+    name = (provider or "").strip().lower()
+    if not name or name in {"auto", "detect", "default"}:
+        return infer_provider(api_key)
+    if name not in SUPPORTED_PROVIDERS:
+        raise InvalidAPIKeyError(
+            f"Unknown provider '{provider}'. Use gemini, openai, anthropic, or auto."
+        )
+    return name
+
+
+def apply_llm_key(api_key: str, provider: str | None = None) -> LLMSettings:
+    """Set the key in this process so chat can start without a restart."""
+    key = normalize_api_key(api_key)
+    name = resolve_provider(key, provider)
+    os.environ[provider_key_var(name)] = key
+    os.environ["JARVIS_LLM_PROVIDER"] = name
+    return get_llm_settings()
+
+
+def persist_llm_key(
+    api_key: str,
+    provider: str | None = None,
+    *,
+    path: Path | str | None = None,
+) -> Path:
+    """Write the key into a local .env (mode 0600). Other variables stay intact."""
+    key = normalize_api_key(api_key)
+    name = resolve_provider(key, provider)
+    target = Path(path).expanduser() if path else env_file_path()
+    _upsert_env_file(
+        target,
+        {
+            provider_key_var(name): key,
+            "JARVIS_LLM_PROVIDER": name,
+        },
+    )
+    return target
+
+
+def install_llm_key(
+    api_key: str,
+    provider: str | None = None,
+    *,
+    path: Path | str | None = None,
+) -> LLMSettings:
+    """Apply then persist a pasted key. One key is still enough."""
+    settings = apply_llm_key(api_key, provider)
+    persist_llm_key(api_key, settings.provider, path=path)
+    return settings
+
+
+def _upsert_env_file(path: Path, assignments: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original = path.read_text(encoding="utf-8") if path.exists() else ""
+    lines = (
+        original.splitlines()
+        if original.strip()
+        else [
+            "# Local Jarvis keys — gitignored. Do not commit this file.",
+            "",
+        ]
+    )
+    pending = dict(assignments)
+    written: list[str] = []
+    for line in lines:
+        parsed = _parse_env_assignment(line)
+        if parsed and parsed[0] in pending:
+            key = parsed[0]
+            written.append(f"{key}={_format_env_value(pending.pop(key))}")
+        else:
+            written.append(line)
+    if pending:
+        if written and written[-1].strip():
+            written.append("")
+        for key, value in pending.items():
+            written.append(f"{key}={_format_env_value(value)}")
+    text = "\n".join(written).rstrip() + "\n"
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
+    except Exception:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+        raise
+
+
+def _parse_env_assignment(line: str) -> tuple[str, str] | None:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return None
+    match = _ENV_ASSIGNMENT.match(stripped)
+    if not match:
+        return None
+    return match.group(1), match.group(2)
+
+
+def _format_env_value(value: str) -> str:
+    if value == "":
+        return ""
+    if all(ch.isalnum() or ch in "-_./+=:" for ch in value):
+        return value
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def _missing_key_message(provider: str | None) -> str:
     if provider:
         names = list(_PROVIDER_KEY_VARS[provider]) + ["JARVIS_API_KEY"]
         return f"No API key found for {provider}. Set one of: {', '.join(names)}."
     return (
-        "No AI API key found. Drop one key into .env and Jarvis will use it:\n"
+        "No AI API key found. Paste one in the localhost UI "
+        "(python main.py --serve) or drop it into .env:\n"
         "  GEMINI_API_KEY=...\n"
         "  OPENAI_API_KEY=...\n"
         "  ANTHROPIC_API_KEY=...\n"

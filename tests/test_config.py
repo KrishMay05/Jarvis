@@ -1,6 +1,20 @@
+import os
+import stat
+
 import pytest
 
-from src.config import MissingAPIKeyError, describe_runtime, get_llm_settings, list_llm_settings
+from src.config import (
+    InvalidAPIKeyError,
+    MissingAPIKeyError,
+    apply_llm_key,
+    describe_runtime,
+    env_file_path,
+    get_llm_settings,
+    infer_provider,
+    install_llm_key,
+    list_llm_settings,
+    persist_llm_key,
+)
 
 
 def test_detects_gemini_key(monkeypatch):
@@ -103,6 +117,7 @@ def test_describe_runtime_mentions_one_key_tools(monkeypatch):
     assert "mail" in text.lower()
     assert "calendar" in text.lower()
     assert "web ui" in text.lower()
+    assert "paste" in text.lower()
     assert "none required" in text.lower()
     assert "MCP:" in text
     assert "Memory:" in text
@@ -151,6 +166,63 @@ def test_shared_jarvis_api_key_does_not_duplicate_provider(monkeypatch):
     configured = list_llm_settings()
     assert [item.provider for item in configured] == ["openai"]
     assert configured[0].api_key == "sk-openai"
+
+
+def test_infer_provider_from_key_prefix():
+    assert infer_provider("sk-ant-secret-key") == "anthropic"
+    assert infer_provider("sk-openai-secret") == "openai"
+    assert infer_provider("AIzaSyTestGemini") == "gemini"
+    assert infer_provider("unknown-looking") == "gemini"
+
+
+def test_apply_llm_key_sets_env_and_becomes_primary(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-already-there")
+    settings = apply_llm_key("sk-openai-ui-paste-key", "auto")
+    assert settings.provider == "openai"
+    assert settings.api_key == "sk-openai-ui-paste-key"
+    assert os.environ["OPENAI_API_KEY"] == "sk-openai-ui-paste-key"
+    assert os.environ["JARVIS_LLM_PROVIDER"] == "openai"
+    assert get_llm_settings().provider == "openai"
+
+
+def test_persist_llm_key_updates_env_without_wiping_other_vars(tmp_path, monkeypatch):
+    target = tmp_path / "custom.env"
+    target.write_text(
+        "# keep me\nGOOGLE_OAUTH_CLIENT_ID=abc.apps.googleusercontent.com\nGEMINI_API_KEY=\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("JARVIS_ENV_PATH", str(tmp_path / "unused.env"))
+    written = persist_llm_key("sk-openai-persist-key-1", path=target)
+    assert written == target
+    text = target.read_text(encoding="utf-8")
+    assert "# keep me" in text
+    assert "GOOGLE_OAUTH_CLIENT_ID=abc.apps.googleusercontent.com" in text
+    assert "OPENAI_API_KEY=sk-openai-persist-key-1" in text
+    assert "JARVIS_LLM_PROVIDER=openai" in text
+    assert "sk-openai-persist-key-1" in text
+    mode = stat.S_IMODE(target.stat().st_mode)
+    assert mode == 0o600
+
+
+def test_install_llm_key_uses_jarvis_env_path(tmp_path, monkeypatch):
+    target = tmp_path / "jarvis.env"
+    monkeypatch.setenv("JARVIS_ENV_PATH", str(target))
+    assert env_file_path() == target
+    settings = install_llm_key("AIzaSyInstallKey99")
+    assert settings.provider == "gemini"
+    assert target.exists()
+    assert "GEMINI_API_KEY=AIzaSyInstallKey99" in target.read_text(encoding="utf-8")
+
+
+def test_normalize_rejects_placeholder_and_short_keys():
+    from src.config import normalize_api_key
+
+    with pytest.raises(InvalidAPIKeyError, match="too short"):
+        normalize_api_key("short")
+    with pytest.raises(InvalidAPIKeyError, match="placeholder"):
+        normalize_api_key("your-gemini-key")
+    with pytest.raises(InvalidAPIKeyError, match="Paste an AI API key"):
+        normalize_api_key("   ")
 
 
 def test_describe_runtime_mentions_optional_fallback(monkeypatch):
