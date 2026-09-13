@@ -13,7 +13,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Put **one** of these in `.env`:
+Put **one** of these in `.env`, or skip the file and paste the key in the localhost UI (`python main.py --serve`):
 
 ```
 GEMINI_API_KEY=your-gemini-key
@@ -65,7 +65,7 @@ python main.py --serve --open
 python main.py --run-due
 ```
 
-The web UI is **localhost only** (`http://127.0.0.1:8787/`). Same one AI key as the REPL — no extra vendor account. If `.env` has no key yet, the page still loads and tells you what to add.
+The web UI is **localhost only** (`http://127.0.0.1:8787/`). Same one AI key as the REPL — no extra vendor account. If `.env` has no key yet, the page still loads: paste a Gemini, OpenAI, or Anthropic key in the sidebar. Chat unlocks immediately and the key is written to local `.env` (gitignored, mode 0600). No restart.
 
 Type `exit`, `bye`, or `close` to leave the REPL.
 
@@ -84,7 +84,7 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Mail | Gmail inbox/search after Connect Google in the web UI or `python main.py --connect google` (OAuth, not an AI key) |
 | Calendar | Upcoming Google Calendar events after the same Google login |
 | MCP tools | Local stdio servers from `mcp.json` (no extra AI key) |
-| Web UI | `python main.py --serve` on 127.0.0.1 (no extra key; Connect Google in the sidebar) |
+| Web UI | `python main.py --serve` on 127.0.0.1 (paste the AI key in the sidebar or use `.env`; Connect Google there too) |
 
 ## MCP connections
 
@@ -195,18 +195,19 @@ Override the token file with `JARVIS_AUTH_PATH` or `JARVIS_HOME`. The file is gi
 
 ## Local web UI
 
-The REPL is optional. After one AI key is in `.env`:
+The REPL is optional. Start the UI even before you have a key:
 
 ```bash
 python main.py --serve --open
 ```
 
-Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. **Connect Google** and **Disconnect** live in that sidebar — same OAuth as `--connect google`, no extra AI key. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar.
+Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. **Paste one AI key** there to unlock chat without editing `.env` or restarting. **Connect Google** and **Disconnect** live in that sidebar — same OAuth as `--connect google`, no extra AI key. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar.
 
 - No extra API key and no cloud UI vendor
 - Binds to loopback so the assistant is not on your LAN
-- Works without a key too: the page explains what to put in `.env`, chat stays paused, and Google login still works
+- Works without a key too: paste a Gemini / OpenAI / Anthropic key in the sidebar (saved to local `.env`), or keep chat paused and still connect Google
 - Status/health are JSON at `/api/status` and `/api/health` (including optional LLM fallbacks)
+- Saving a key is `POST /api/key` on localhost only — the key is never returned in API responses
 - Google OAuth callback is `/oauth/google/callback` on the same localhost server
 
 ## Development
@@ -249,5 +250,6 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 9. ~~Connect Google from the web UI~~ (same localhost server as the OAuth callback)
 10. ~~Provider fallback if the first AI key fails~~ (optional extra Gemini/OpenAI/Anthropic key; one key still enough)
 11. ~~Richer research when Instant Answers are empty~~ (Wikipedia candidates + public web search, still no extra key)
-12. Desktop / JS-capable computer use (Playwright or screenshot+input)
-13. Microsoft / Outlook OAuth using the same auth store
+12. ~~Paste an AI key from the localhost UI~~ (no `.env` edit, no restart; still one key)
+13. Desktop / JS-capable computer use (Playwright or screenshot+input)
+14. Microsoft / Outlook OAuth using the same auth store

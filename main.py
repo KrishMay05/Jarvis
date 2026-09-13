@@ -68,7 +68,7 @@ def main() -> None:
     parser.add_argument(
         "--serve",
         action="store_true",
-        help="Start the localhost web UI (no extra API key; chat uses your one LLM key)",
+        help="Start the localhost web UI (paste one AI key in the page, or use .env)",
     )
     parser.add_argument(
         "--port",
@@ -143,7 +143,7 @@ def main() -> None:
             "Computer use can open public web pages. Mail and calendar use "
             "Google OAuth (Connect Google in --serve, or --connect google). "
             "MCP servers come from mcp.json. A localhost web UI is "
-            "python main.py --serve."
+            "python main.py --serve — paste an AI key there if .env is empty."
         )
         print("Type exit to leave.")
         orchestrator.run()

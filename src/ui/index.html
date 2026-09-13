@@ -190,6 +190,22 @@
         font-weight: 650;
       }
       button.ghost { color: var(--muted); }
+      .key-form {
+        display: grid;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .key-form input, .key-form select {
+        width: 100%;
+        background: #0b1017;
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 8px 10px;
+        font: inherit;
+        font-size: 0.82rem;
+      }
+      .key-form input:focus, .key-form select:focus { outline: 1px solid var(--gold); }
       .hint { color: var(--muted); font-size: 0.78rem; padding: 0 16px 12px; }
       @media (max-width: 860px) {
         .layout { grid-template-columns: 1fr; }
@@ -211,6 +227,19 @@
         <aside>
           <h2>Status</h2>
           <p id="llm">Loading runtime…</p>
+          <h2>AI key</h2>
+          <p id="key-status" class="meta"></p>
+          <form id="key-form" class="key-form">
+            <select id="key-provider" aria-label="AI provider">
+              <option value="auto">Auto-detect provider</option>
+              <option value="gemini">Gemini</option>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+            </select>
+            <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste Gemini / OpenAI / Anthropic key" />
+            <button type="submit" id="save-key" class="secondary">Save key</button>
+          </form>
+          <p id="key-hint" class="meta">Saved on this machine in .env (gitignored). Not a second vendor — this is the one AI key.</p>
           <h2>Tools</h2>
           <div id="tools" class="tools"></div>
           <h2>Memory</h2>
@@ -233,7 +262,7 @@
             <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox"></textarea>
             <button id="send" type="submit">Send</button>
           </form>
-          <div class="hint">Localhost only. One AI key in .env is enough. A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
+          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
         </section>
       </div>
     </div>
@@ -244,6 +273,10 @@
       const prompt = document.getElementById("prompt");
       const connectBtn = document.getElementById("connect-google");
       const disconnectBtn = document.getElementById("disconnect-google");
+      const keyForm = document.getElementById("key-form");
+      const keyInput = document.getElementById("api-key");
+      const keyProvider = document.getElementById("key-provider");
+      const saveKey = document.getElementById("save-key");
       let ready = false;
 
       function add(text, cls) {
@@ -273,6 +306,15 @@
         document.getElementById("automations").textContent = data.automations || "";
         document.getElementById("auth").textContent = data.auth || "";
         document.getElementById("mcp").textContent = data.mcp || "";
+        const keyStatus = document.getElementById("key-status");
+        if (ready) {
+          keyStatus.textContent = (data.llm && data.llm.summary)
+            ? ("Using " + data.llm.summary + ". Paste another key to switch.")
+            : "Key is set. Paste another to switch.";
+        } else {
+          keyStatus.textContent = "Drop in one Gemini, OpenAI, or Anthropic key. Saved locally — no restart.";
+        }
+        saveKey.disabled = data.can_install_key === false;
         renderAuth(data);
         const tools = document.getElementById("tools");
         tools.innerHTML = "";
@@ -286,7 +328,7 @@
           if (ready) {
             add("At your service. Weather, research, memory, automations, computer use, mail, and calendar — one AI key. Connect Google in the sidebar when you want inbox and calendar.", "jarvis");
           } else {
-            add(data.error || "Drop one AI API key into .env, then restart python main.py --serve.", "system");
+            add(data.error || "Paste one AI API key in the sidebar. No .env edit and no restart.", "system");
             add("You can still connect Google for mail and calendar without an AI key.", "system");
           }
         }
@@ -307,6 +349,35 @@
           hint.textContent = "Connect Google here — no extra AI key. Chat can stay paused.";
         }
       }
+
+      keyForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const api_key = keyInput.value.trim();
+        if (!api_key) {
+          add("Paste an AI API key first.", "system");
+          return;
+        }
+        saveKey.disabled = true;
+        try {
+          const res = await fetch("/api/key", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ api_key, provider: keyProvider.value }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            add(data.error || "Could not save that key.", "system");
+          } else {
+            keyInput.value = "";
+            add(data.message || "AI key saved. Chat is ready.", "system");
+          }
+        } catch (err) {
+          add("Could not reach the local Jarvis server.", "system");
+        }
+        await refreshStatus();
+        saveKey.disabled = false;
+        if (ready) prompt.focus();
+      });
 
       document.getElementById("composer").addEventListener("submit", async (event) => {
         event.preventDefault();

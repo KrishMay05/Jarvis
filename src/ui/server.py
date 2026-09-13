@@ -26,7 +26,15 @@ from src.auth.oauth import (
 )
 from src.auth.store import AuthStore, auth_status_line
 from src.automation.store import AutomationStore, automation_status_line
-from src.config import LLMSettings, MissingAPIKeyError, describe_runtime, list_llm_settings
+from src.config import (
+    InvalidAPIKeyError,
+    LLMSettings,
+    MissingAPIKeyError,
+    describe_runtime,
+    install_llm_key,
+    list_llm_settings,
+)
+from src.llm import reset_failover_state
 from src.mcp.config import mcp_status_line
 from src.memory.store import MemoryStore, memory_status_line
 
@@ -55,6 +63,8 @@ class JarvisWebApp:
         missing_key: str | None = None,
         auth_store: AuthStore | None = None,
         public_base: str | None = None,
+        orchestrator_factory: Callable | None = None,
+        env_path: Path | str | None = None,
     ):
         self.orchestrator = orchestrator
         self.settings = settings
@@ -63,6 +73,8 @@ class JarvisWebApp:
         self.public_base = (public_base or f"http://{DEFAULT_HOST}:{DEFAULT_PORT}").rstrip(
             "/"
         )
+        self.orchestrator_factory = orchestrator_factory
+        self.env_path = Path(env_path).expanduser() if env_path else None
         self._google_login = None
         self._lock = threading.Lock()
 
@@ -86,6 +98,8 @@ class JarvisWebApp:
             return _json(200, {"text": self._automation_text()})
         if verb == "POST" and route == "/api/chat":
             return self._chat(body)
+        if verb == "POST" and route == "/api/key":
+            return self._install_key(body)
         if verb == "POST" and route == "/api/auth/google/connect":
             return self._connect_google()
         if verb == "POST" and route == "/api/auth/google/disconnect":
@@ -155,6 +169,7 @@ class JarvisWebApp:
             "google": self._google_status(),
             "mcp": mcp_status_line(),
             "bind": "localhost only — not exposed on your LAN",
+            "can_install_key": self._accepts_key_install(),
         }
 
     def _google_status(self) -> dict:
@@ -181,7 +196,8 @@ class JarvisWebApp:
                 503,
                 {
                     "error": self.missing_key
-                    or "Jarvis needs one AI API key in .env before chat can start."
+                    or "Jarvis needs one AI API key before chat can start. "
+                    "Paste it on this page or add it to .env."
                 },
             )
         try:
@@ -204,6 +220,80 @@ class JarvisWebApp:
                 memory.append(f"User: {message}")
             reply = self.orchestrator.handle_message(message)
         return _json(200, {"reply": str(reply), "due": [str(item) for item in due]})
+
+    def _accepts_key_install(self) -> bool:
+        host = urlparse(self.public_base or "").hostname or DEFAULT_HOST
+        return host in _LOOPBACK
+
+    def _install_key(self, body: bytes) -> UiResponse:
+        """Save a pasted AI key locally and unlock chat without a restart."""
+        if not self._accepts_key_install():
+            return _json(403, {"error": "AI keys can only be pasted on localhost."})
+        try:
+            payload = json.loads(body.decode("utf-8") or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return _json(400, {"error": "Send JSON like {\"api_key\": \"...\"}."})
+        if not isinstance(payload, dict):
+            return _json(400, {"error": "Send a JSON object with an api_key field."})
+        api_key = payload.get("api_key") or payload.get("key") or ""
+        provider = payload.get("provider")
+        try:
+            settings = install_llm_key(
+                str(api_key or ""),
+                None if provider is None else str(provider),
+                path=self.env_path,
+            )
+        except InvalidAPIKeyError as exc:
+            return _json(400, {"error": str(exc)})
+        except MissingAPIKeyError as exc:
+            return _json(400, {"error": str(exc)})
+
+        reset_failover_state()
+        factory = self.orchestrator_factory or _default_orchestrator_factory()
+        try:
+            orchestrator = factory(settings)
+        except Exception:
+            return _json(
+                500,
+                {
+                    "error": (
+                        "Saved the key to .env, but Jarvis could not start chat. "
+                        "Restart python main.py --serve."
+                    ),
+                    "saved": True,
+                },
+            )
+
+        with self._lock:
+            previous = self.orchestrator
+            self.orchestrator = orchestrator
+            self.settings = settings
+            self.missing_key = None
+            self.auth_store = _resolve_auth_store(orchestrator, self.auth_store)
+            if previous is not None and previous is not orchestrator:
+                closer = getattr(previous, "close", None)
+                if callable(closer):
+                    try:
+                        closer()
+                    except Exception:
+                        pass
+
+        status = self.status_payload()
+        return _json(
+            200,
+            {
+                "ok": True,
+                "ready": True,
+                "message": (
+                    f"Using {settings.summary()}. Chat is unlocked — no restart needed. "
+                    "The key stays on this machine in .env (gitignored)."
+                ),
+                "llm": status.get("llm"),
+                "runtime": status.get("runtime"),
+                "google": status.get("google"),
+                "auth": status.get("auth"),
+            },
+        )
 
     def _connect_google(self) -> UiResponse:
         """Start PKCE login. Works without an AI key — OAuth is not a vendor key."""
@@ -306,7 +396,11 @@ def serve(
     app.public_base = url.rstrip("/")
     print(f"Jarvis UI · {url}", flush=True)
     if missing_key:
-        print("Chat is paused until you add one AI API key to .env.", flush=True)
+        print(
+            "Chat is paused until you paste one AI API key in the page "
+            "or add it to .env.",
+            flush=True,
+        )
     elif settings is not None:
         print(f"Same key as the REPL · {settings.summary()}", flush=True)
     print(
@@ -352,6 +446,12 @@ def _fallback_summaries(primary: LLMSettings) -> list[dict]:
         for item in configured
         if item.provider != primary.provider
     ]
+
+
+def _default_orchestrator_factory():
+    from src.assistant import build_orchestrator
+
+    return build_orchestrator
 
 
 def _resolve_auth_store(orchestrator, auth_store: AuthStore | None) -> AuthStore:
