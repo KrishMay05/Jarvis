@@ -143,7 +143,8 @@ def main() -> None:
             "Computer use can open public web pages. Mail and calendar use "
             "Google OAuth (Connect Google in --serve, or --connect google). "
             "MCP servers come from mcp.json. A localhost web UI is "
-            "python main.py --serve — paste an AI key there if .env is empty."
+            "python main.py --serve — paste an AI key there if .env is empty. "
+            "Leave --serve running to fire reminders in the background."
         )
         print("Type exit to leave.")
         orchestrator.run()

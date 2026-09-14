@@ -7,6 +7,7 @@ Chat still uses the same Gemini/OpenAI/Anthropic key as the REPL.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import webbrowser
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ from src.auth.oauth import (
     parse_oauth_callback,
 )
 from src.auth.store import AuthStore, auth_status_line
+from src.automation.runner import run_due_jobs
 from src.automation.store import AutomationStore, automation_status_line
 from src.config import (
     InvalidAPIKeyError,
@@ -40,7 +42,9 @@ from src.memory.store import MemoryStore, memory_status_line
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
+DEFAULT_TICK_SECONDS = 15.0
 MAX_BODY_BYTES = 32_768
+_MAX_DUE_INBOX = 50
 _INDEX_PATH = Path(__file__).with_name("index.html")
 
 _LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1"})
@@ -76,7 +80,11 @@ class JarvisWebApp:
         self.orchestrator_factory = orchestrator_factory
         self.env_path = Path(env_path).expanduser() if env_path else None
         self._google_login = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._due_inbox: list[str] = []
+        self._ticker_stop = threading.Event()
+        self._ticker_thread: threading.Thread | None = None
+        self.tick_seconds = _tick_seconds()
 
     def dispatch(self, method: str, path: str, body: bytes = b"") -> UiResponse:
         verb = (method or "GET").upper()
@@ -96,6 +104,8 @@ class JarvisWebApp:
             return _json(200, {"ok": True, "ready": self.ready})
         if verb == "GET" and route == "/api/automations":
             return _json(200, {"text": self._automation_text()})
+        if verb == "GET" and route == "/api/due":
+            return _json(200, {"due": self.take_due()})
         if verb == "POST" and route == "/api/chat":
             return self._chat(body)
         if verb == "POST" and route == "/api/key":
@@ -114,6 +124,7 @@ class JarvisWebApp:
             "/api/status",
             "/api/health",
             "/api/automations",
+            "/api/due",
         }:
             return self.dispatch("GET", path, b"")
         if verb not in {"GET", "POST"}:
@@ -170,6 +181,7 @@ class JarvisWebApp:
             "mcp": mcp_status_line(),
             "bind": "localhost only — not exposed on your LAN",
             "can_install_key": self._accepts_key_install(),
+            "scheduler": self._scheduler_status(),
         }
 
     def _google_status(self) -> dict:
@@ -182,11 +194,81 @@ class JarvisWebApp:
         }
 
     def _automation_text(self) -> str:
+        return self._automation_store().format_list()
+
+    def _automation_store(self) -> AutomationStore:
         orch = self.orchestrator
         store = getattr(orch, "automation_store", None) if orch is not None else None
         if isinstance(store, AutomationStore):
-            return store.format_list()
-        return AutomationStore().format_list()
+            return store
+        return AutomationStore()
+
+    def _scheduler_status(self) -> dict:
+        thread = self._ticker_thread
+        with self._lock:
+            pending = len(self._due_inbox)
+        return {
+            "running": bool(thread is not None and thread.is_alive()),
+            "interval_seconds": self.tick_seconds,
+            "pending_due": pending,
+        }
+
+    def start_ticker(self) -> None:
+        """Fire due automations in the background while the UI is open."""
+        if self._ticker_thread is not None and self._ticker_thread.is_alive():
+            return
+        self._ticker_stop.clear()
+        thread = threading.Thread(
+            target=self._ticker_loop,
+            name="jarvis-automation-ticker",
+            daemon=True,
+        )
+        self._ticker_thread = thread
+        thread.start()
+
+    def stop_ticker(self) -> None:
+        self._ticker_stop.set()
+        thread = self._ticker_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+        self._ticker_thread = None
+
+    def _ticker_loop(self) -> None:
+        while True:
+            try:
+                self.tick_due_automations()
+            except Exception:
+                pass
+            if self._ticker_stop.wait(self.tick_seconds):
+                break
+
+    def tick_due_automations(self, now=None) -> list[str]:
+        """Run due jobs and queue their reports for the UI. Safe for tests."""
+        with self._lock:
+            due = self._drain_due_locked(now)
+            if due:
+                self._due_inbox.extend(due)
+                if len(self._due_inbox) > _MAX_DUE_INBOX:
+                    self._due_inbox = self._due_inbox[-_MAX_DUE_INBOX:]
+            return list(due)
+
+    def take_due(self) -> list[str]:
+        """Return queued due reports and clear the inbox (UI poll / chat)."""
+        with self._lock:
+            due = list(self._due_inbox)
+            self._due_inbox.clear()
+            return due
+
+    def _drain_due_locked(self, now=None) -> list[str]:
+        orch = self.orchestrator
+        if orch is not None:
+            drain = getattr(orch, "drain_due_automations", None)
+            if callable(drain):
+                try:
+                    return list(drain(now=now) or [])
+                except TypeError:
+                    return list(drain() or [])
+        return run_due_jobs(self._automation_store(), run_prompt=None, now=now)
 
     def _chat(self, body: bytes) -> UiResponse:
         if len(body) > MAX_BODY_BYTES:
@@ -211,10 +293,11 @@ class JarvisWebApp:
             return _json(400, {"error": "Type a message first."})
 
         with self._lock:
-            due: list[str] = []
-            drain = getattr(self.orchestrator, "drain_due_automations", None)
-            if callable(drain):
-                due = list(drain() or [])
+            newly = self._drain_due_locked()
+            if newly:
+                self._due_inbox.extend(newly)
+            due = list(self._due_inbox)
+            self._due_inbox.clear()
             memory = getattr(self.orchestrator, "memory", None)
             if isinstance(memory, list):
                 memory.append(f"User: {message}")
@@ -405,6 +488,8 @@ def serve(
         print(f"Same key as the REPL · {settings.summary()}", flush=True)
     print(
         "Connect Google from this page (OAuth, not a second AI key). "
+        "Reminders fire in the background while this UI is open "
+        f"(every {int(app.tick_seconds)}s) — no extra cron. "
         "Only localhost can connect. Ctrl+C to stop.",
         flush=True,
     )
@@ -415,12 +500,25 @@ def serve(
             webbrowser.open(url)
         except Exception:
             pass
+    app.start_ticker()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nJarvis UI stopped.")
     finally:
+        app.stop_ticker()
         httpd.server_close()
+
+
+def _tick_seconds() -> float:
+    raw = (os.getenv("JARVIS_AUTOMATION_TICK_SECONDS") or "").strip()
+    if not raw:
+        return DEFAULT_TICK_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return DEFAULT_TICK_SECONDS
+    return max(1.0, min(value, 3600.0))
 
 
 def _public_url(host: str, port: int) -> str:

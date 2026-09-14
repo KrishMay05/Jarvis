@@ -52,7 +52,8 @@ def _execute(
         if run_prompt is None:
             return (
                 f"Automation ({job.id}) '{job.title}' is due but needs Jarvis "
-                "to run the prompt. Use `python main.py --run-due`.",
+                "to run the prompt. Keep `python main.py --serve` open or use "
+                "`python main.py --run-due`.",
                 False,
             )
         try:

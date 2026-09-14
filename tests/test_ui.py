@@ -1,9 +1,13 @@
 import json
 import threading
+import time
+from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from src.auth.store import AuthAccount, AuthStore
+from src.automation.schedule import parse_schedule, utc_now
+from src.automation.store import AutomationStore
 from src.config import LLMSettings, describe_runtime
 from src.ui.server import MAX_BODY_BYTES, JarvisWebApp
 
@@ -21,7 +25,13 @@ class FakeOrchestrator:
         self.calls.append(text)
         return f"heard:{text}"
 
-    def drain_due_automations(self):
+    def drain_due_automations(self, now=None):
+        if self.automation_store is not None:
+            from src.automation.runner import run_due_jobs
+
+            return run_due_jobs(
+                self.automation_store, run_prompt=self.handle_message, now=now
+            )
         return ["Reminder: stretch"]
 
 
@@ -34,7 +44,10 @@ def test_index_is_self_contained_html():
     assert "Jarvis" in html
     assert "/api/chat" in html
     assert "/api/status" in html
+    assert "/api/due" in html
     assert "/api/auth/google/connect" in html
+    assert "Fires in the background" in html
+    assert "pollDue" in html
     assert "/api/key" in html
     assert "Connect Google" in html
     assert "Save key" in html
@@ -54,6 +67,8 @@ def test_status_without_key_is_not_ready():
     assert payload["google"]["connected"] is False
     assert "localhost" in payload["bind"]
     assert payload["can_install_key"] is True
+    assert payload["scheduler"]["running"] is False
+    assert payload["scheduler"]["pending_due"] == 0
 
 
 def test_status_with_settings_lists_llm():
@@ -463,6 +478,136 @@ def test_http_google_connect_roundtrip(monkeypatch):
         assert status["ready"] is False
         assert status["google"]["configured"] is True
         assert status["google"]["connected"] is False
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+FIXED = datetime(2026, 9, 14, 15, 0, tzinfo=timezone.utc)
+
+
+def test_ticker_fires_reminder_without_ai_key():
+    store = AutomationStore()
+    store.add(
+        kind="remind",
+        title="stretch",
+        schedule=parse_schedule("in 5 minutes", now=FIXED),
+        message="stretch",
+    )
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    due = app.tick_due_automations(now=FIXED + timedelta(minutes=6))
+    assert len(due) == 1
+    assert "stretch" in due[0]
+    payload = json.loads(app.dispatch("GET", "/api/due").body)
+    assert payload["due"] == due
+    empty = json.loads(app.dispatch("GET", "/api/due").body)
+    assert empty["due"] == []
+    listed = json.loads(app.dispatch("GET", "/api/automations").body)
+    assert "stretch" in listed["text"]
+
+
+def test_ticker_run_job_needs_orchestrator_then_runs():
+    store = AutomationStore()
+    store.add(
+        kind="run",
+        title="news",
+        schedule=parse_schedule("in 1 minutes", now=FIXED),
+        prompt="Research the latest AI news",
+    )
+    paused = JarvisWebApp(missing_key="No AI API key found.")
+    skipped = paused.tick_due_automations(now=FIXED + timedelta(minutes=2))
+    assert skipped == []
+    assert AutomationStore().due_jobs(FIXED + timedelta(minutes=2))
+
+    orch = FakeOrchestrator()
+    orch.automation_store = AutomationStore()
+    app = JarvisWebApp(
+        orchestrator=orch,
+        settings=LLMSettings(provider="openai", api_key="sk-test", model="gpt-4o-mini"),
+    )
+    due = app.tick_due_automations(now=FIXED + timedelta(minutes=2))
+    assert len(due) == 1
+    assert "heard:Research the latest AI news" in due[0]
+    assert orch.calls == ["Research the latest AI news"]
+    assert json.loads(app.dispatch("GET", "/api/due").body)["due"] == due
+
+
+def test_chat_consumes_queued_due_jobs():
+    store = AutomationStore()
+    store.add(
+        kind="remind",
+        title="water",
+        schedule=parse_schedule("in 1 minutes", now=FIXED),
+        message="drink water",
+    )
+    orch = FakeOrchestrator()
+    orch.automation_store = store
+    app = JarvisWebApp(
+        orchestrator=orch,
+        settings=LLMSettings(provider="openai", api_key="sk-test", model="gpt-4o-mini"),
+    )
+    app.tick_due_automations(now=FIXED + timedelta(minutes=2))
+    response = app.dispatch(
+        "POST",
+        "/api/chat",
+        json.dumps({"message": "hello"}).encode(),
+    )
+    payload = json.loads(response.body)
+    assert response.status == 200
+    assert payload["reply"] == "heard:hello"
+    assert any("drink water" in line for line in payload["due"])
+    assert json.loads(app.dispatch("GET", "/api/due").body)["due"] == []
+
+
+def test_start_ticker_fires_overdue_reminder():
+    store = AutomationStore()
+    store.add(
+        kind="remind",
+        title="stand",
+        schedule=parse_schedule("in 1 seconds", now=utc_now() - timedelta(seconds=5)),
+        message="stand up",
+    )
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    app.tick_seconds = 0.05
+    app.start_ticker()
+    try:
+        deadline = time.time() + 2
+        due = []
+        while time.time() < deadline:
+            due = app.take_due()
+            if due:
+                break
+            time.sleep(0.05)
+        assert due
+        assert any("stand up" in line for line in due)
+        status = json.loads(app.dispatch("GET", "/api/status").body)
+        assert status["scheduler"]["running"] is True
+    finally:
+        app.stop_ticker()
+    assert json.loads(app.dispatch("GET", "/api/status").body)["scheduler"]["running"] is False
+
+
+def test_http_due_poll_roundtrip():
+    store = AutomationStore()
+    store.add(
+        kind="remind",
+        title="tea",
+        schedule=parse_schedule("in 1 minutes", now=FIXED),
+        message="tea is ready",
+    )
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    app.tick_due_automations(now=FIXED + timedelta(minutes=2))
+    httpd = app.make_server("127.0.0.1", 0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = httpd.server_address[1]
+        with urlopen(f"http://127.0.0.1:{port}/api/due", timeout=5) as resp:
+            payload = json.loads(resp.read())
+        assert any("tea is ready" in line for line in payload["due"])
+        with urlopen(f"http://127.0.0.1:{port}/api/due", timeout=5) as resp:
+            empty = json.loads(resp.read())
+        assert empty["due"] == []
     finally:
         httpd.shutdown()
         httpd.server_close()

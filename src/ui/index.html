@@ -246,6 +246,7 @@
           <p id="memory" class="meta"></p>
           <h2>Automations</h2>
           <p id="automations" class="meta"></p>
+          <p id="scheduler" class="meta"></p>
           <h2>Auth</h2>
           <p id="auth" class="meta"></p>
           <div class="auth-actions">
@@ -262,7 +263,7 @@
             <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox"></textarea>
             <button id="send" type="submit">Send</button>
           </form>
-          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
+          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. Reminders fire in the background while this page is open (no extra cron). A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
         </section>
       </div>
     </div>
@@ -287,6 +288,22 @@
         log.scrollTop = log.scrollHeight;
       }
 
+      function addDue(line) {
+        const text = String(line || "").trim();
+        if (!text) return;
+        add(text, "due");
+      }
+
+      async function pollDue() {
+        try {
+          const res = await fetch("/api/due");
+          const data = await res.json();
+          const lines = data.due || [];
+          lines.forEach(addDue);
+          if (lines.length) refreshStatus();
+        } catch (err) {}
+      }
+
       async function refreshStatus() {
         const res = await fetch("/api/status");
         const data = await res.json();
@@ -304,6 +321,13 @@
         document.getElementById("llm").textContent = data.error || (data.runtime || "Ready.");
         document.getElementById("memory").textContent = data.memory || "";
         document.getElementById("automations").textContent = data.automations || "";
+        const scheduler = data.scheduler || {};
+        const schedEl = document.getElementById("scheduler");
+        if (scheduler.running) {
+          schedEl.textContent = "Fires in the background while this page is open — no extra cron.";
+        } else {
+          schedEl.textContent = "Background ticker is off in this process. Keep --serve running for reminders.";
+        }
         document.getElementById("auth").textContent = data.auth || "";
         document.getElementById("mcp").textContent = data.mcp || "";
         const keyStatus = document.getElementById("key-status");
@@ -326,7 +350,7 @@
         });
         if (!log.childElementCount) {
           if (ready) {
-            add("At your service. Weather, research, memory, automations, computer use, mail, and calendar — one AI key. Connect Google in the sidebar when you want inbox and calendar.", "jarvis");
+            add("At your service. Weather, research, memory, automations, computer use, mail, and calendar — one AI key. Reminders fire here while the page is open. Connect Google in the sidebar when you want inbox and calendar.", "jarvis");
           } else {
             add(data.error || "Paste one AI API key in the sidebar. No .env edit and no restart.", "system");
             add("You can still connect Google for mail and calendar without an AI key.", "system");
@@ -393,7 +417,7 @@
             body: JSON.stringify({ message }),
           });
           const data = await res.json();
-          (data.due || []).forEach((line) => add(line, "due"));
+          (data.due || []).forEach(addDue);
           if (!res.ok) {
             add(data.error || "Jarvis could not answer that.", "system");
           } else {
@@ -447,6 +471,8 @@
         pill.classList.add("bad");
         add("The local UI server is not responding.", "system");
       });
+      pollDue();
+      setInterval(pollDue, 4000);
     </script>
   </body>
 </html>
