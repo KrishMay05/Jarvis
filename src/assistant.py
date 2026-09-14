@@ -70,7 +70,9 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
             "Schedules, lists, pauses, and cancels local reminders and "
             "recurring Jarvis prompts (research, weather checks). Use when "
             "the user says remind me, every morning, daily, or mentions "
-            "automations. Local file only — no extra API key or cron account."
+            "automations. Local file only — no extra API key or cron account. "
+            "While the localhost UI (--serve) is open, due jobs fire in the "
+            "background; otherwise use python main.py --run-due."
         ),
         Tools=[AutomationTool(automations)],
         Model=model,

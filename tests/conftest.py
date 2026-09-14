@@ -24,6 +24,7 @@ def isolate_local_state(monkeypatch, tmp_path):
         "JARVIS_MODEL",
         "JARVIS_LLM_FAILOVER",
         "JARVIS_DEBUG",
+        "JARVIS_AUTOMATION_TICK_SECONDS",
     ):
         monkeypatch.delenv(var, raising=False)
     reset_failover_state()
