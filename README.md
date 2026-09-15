@@ -2,7 +2,7 @@
 
 A personal assistant you can run locally. Drop in **one AI API key** (Gemini, OpenAI, or Anthropic) and the built-in tools work — no weather key, no search key, no extra accounts.
 
-An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, scheduled automations, computer use (open public web pages), **mail and calendar** (Google OAuth from the CLI or the localhost UI), general chat, and any **MCP** servers you connect. Talk to it in the terminal or at a **localhost web UI** (`python main.py --serve`).
+An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, scheduled automations, computer use (open public web pages), **mail and calendar** (Google OAuth from the CLI or the localhost UI), general chat, and any **MCP** servers you connect. Talk to it in the terminal or at a **localhost web UI** (`python main.py --serve`). The sidebar lists remembered facts and scheduled jobs so you can add, forget, pause, or cancel them without chatting.
 
 ## Setup
 
@@ -78,8 +78,8 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Weather | [wttr.in](https://wttr.in) (no extra key) |
 | Time | Local timezone database |
 | Research | Wikipedia, named public sites, DuckDuckGo, then Stack Overflow (no extra key) |
-| Memory | Local `~/.jarvis/memory.json` — remember facts across sessions (no extra key) |
-| Automations | Local `~/.jarvis/automations.json` — reminders and recurring prompts; `--serve` fires them in the background (no extra key) |
+| Memory | Local `~/.jarvis/memory.json` — remember facts across sessions; inspect or forget them in the web UI (no extra key) |
+| Automations | Local `~/.jarvis/automations.json` — reminders and recurring prompts; `--serve` fires them in the background and the sidebar can add/pause/cancel jobs (no extra key) |
 | Computer use | Open public http(s) pages, read the text, follow on-page links (no extra key) |
 | Mail | Gmail inbox/search after Connect Google in the web UI or `python main.py --connect google` (OAuth, not an AI key) |
 | Calendar | Upcoming Google Calendar events after the same Google login |
@@ -112,6 +112,7 @@ Jarvis keeps personal facts and recent conversation locally so it still knows yo
 - Default file: `~/.jarvis/memory.json`
 - Override with `JARVIS_MEMORY_PATH` or `JARVIS_HOME`
 - Say **remember**, **forget**, or ask **what do you remember** — the Memory Agent writes the file
+- In the localhost UI, the **Memory** sidebar lists facts. Add or forget them there without chatting and without an AI key
 - Specialists reuse facts automatically (home city for weather, preferred units, your name)
 
 No extra vendor account. The file is gitignored if you keep it in the project tree.
@@ -123,6 +124,7 @@ Reminders and recurring research/weather checks live in a local JSON file. Still
 - Default file: `~/.jarvis/automations.json`
 - Override with `JARVIS_AUTOMATIONS_PATH` or `JARVIS_HOME`
 - Say **remind me in 10 minutes to stretch**, **every morning research the weather**, **list automations**, or **cancel** a job id
+- The localhost UI **Automations** sidebar lists jobs. Schedule, pause, resume, or cancel them without chatting (reminders still need no AI key; `run` jobs use the same key when they fire)
 - The REPL fires due jobs between turns
 - **`python main.py --serve` fires due jobs in the background** while the localhost UI is open (every 15 seconds). Reminders do not need an AI key; `run` jobs use the same key as chat. Due reports show up in the chat log without sending another message
 - Hook system cron (or Task Scheduler) to `python main.py --run-due` only if the UI and REPL are both closed
@@ -202,12 +204,14 @@ The REPL is optional. Start the UI even before you have a key:
 python main.py --serve --open
 ```
 
-Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. **Paste one AI key** there to unlock chat without editing `.env` or restarting. **Connect Google** and **Disconnect** live in that sidebar — same OAuth as `--connect google`, no extra AI key. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar. **Due reminders appear in the chat log on their own** while `--serve` is running; you do not need to send a message or set up system cron for that.
+Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. **Paste one AI key** there to unlock chat without editing `.env` or restarting. **Remember facts and schedule automations** in that same sidebar — no chat phrasing and no extra API key. **Connect Google** and **Disconnect** live there too — same OAuth as `--connect google`. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar. **Due reminders appear in the chat log on their own** while `--serve` is running; you do not need to send a message or set up system cron for that.
 
 - No extra API key and no cloud UI vendor
 - Binds to loopback so the assistant is not on your LAN
-- Works without a key too: paste a Gemini / OpenAI / Anthropic key in the sidebar (saved to local `.env`), or keep chat paused and still connect Google
+- Works without a key too: paste a Gemini / OpenAI / Anthropic key in the sidebar (saved to local `.env`), remember facts, schedule reminders, or keep chat paused and still connect Google
 - Status/health are JSON at `/api/status` and `/api/health` (including optional LLM fallbacks)
+- Memory facts are JSON at `/api/memory` (`POST` to add, `/api/memory/forget` to drop)
+- Automations are JSON at `/api/automations` (`POST` to add, `/cancel`, `/pause`, `/enable`)
 - Due automations are JSON at `/api/due` (consumed by the page poll)
 - Saving a key is `POST /api/key` on localhost only — the key is never returned in API responses
 - Google OAuth callback is `/oauth/google/callback` on the same localhost server
@@ -234,7 +238,7 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 - `src/memory/` — local persistent facts and recent turns
 - `src/orchestrator.py` — routes a request, loops specialists, then answers
 - `src/tools/` — weather, time, research, memory, automation, computer, mail, calendar, MCP adapters
-- `src/ui/` — localhost web chat UI (`--serve`; background automation ticker)
+- `src/ui/` — localhost web chat UI (`--serve`; background automation ticker; memory and automation editors)
 - `tests/` — unit tests that do not need live API keys
 
 ## Roadmap
@@ -254,5 +258,6 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 11. ~~Richer research when Instant Answers are empty~~ (Wikipedia candidates + public web search, still no extra key)
 12. ~~Paste an AI key from the localhost UI~~ (no `.env` edit, no restart; still one key)
 13. ~~Background automation ticker in `--serve`~~ (due reminders appear in the UI without cron or another chat)
-14. Desktop / JS-capable computer use (Playwright or screenshot+input)
-15. Microsoft / Outlook OAuth using the same auth store
+14. ~~Memory and automation editors in the localhost UI~~ (list/add/forget facts and schedule/pause/cancel jobs without chatting)
+15. Desktop / JS-capable computer use (Playwright or screenshot+input)
+16. Microsoft / Outlook OAuth using the same auth store

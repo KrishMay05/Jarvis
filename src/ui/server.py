@@ -27,6 +27,7 @@ from src.auth.oauth import (
 )
 from src.auth.store import AuthStore, auth_status_line
 from src.automation.runner import run_due_jobs
+from src.automation.schedule import ScheduleParseError, parse_schedule
 from src.automation.store import AutomationStore, automation_status_line
 from src.config import (
     InvalidAPIKeyError,
@@ -103,13 +104,27 @@ class JarvisWebApp:
         if verb == "GET" and route == "/api/health":
             return _json(200, {"ok": True, "ready": self.ready})
         if verb == "GET" and route == "/api/automations":
-            return _json(200, {"text": self._automation_text()})
+            return _json(200, self._automations_payload())
+        if verb == "GET" and route == "/api/memory":
+            return _json(200, self._memory_payload())
         if verb == "GET" and route == "/api/due":
             return _json(200, {"due": self.take_due()})
         if verb == "POST" and route == "/api/chat":
             return self._chat(body)
         if verb == "POST" and route == "/api/key":
             return self._install_key(body)
+        if verb == "POST" and route == "/api/memory":
+            return self._remember_fact(body)
+        if verb == "POST" and route == "/api/memory/forget":
+            return self._forget_fact(body)
+        if verb == "POST" and route == "/api/automations":
+            return self._add_automation(body)
+        if verb == "POST" and route == "/api/automations/cancel":
+            return self._cancel_automation(body)
+        if verb == "POST" and route == "/api/automations/pause":
+            return self._set_automation_enabled(body, False)
+        if verb == "POST" and route == "/api/automations/enable":
+            return self._set_automation_enabled(body, True)
         if verb == "POST" and route == "/api/auth/google/connect":
             return self._connect_google()
         if verb == "POST" and route == "/api/auth/google/disconnect":
@@ -124,6 +139,7 @@ class JarvisWebApp:
             "/api/status",
             "/api/health",
             "/api/automations",
+            "/api/memory",
             "/api/due",
         }:
             return self.dispatch("GET", path, b"")
@@ -173,9 +189,11 @@ class JarvisWebApp:
                 "mcp",
             ],
             "memory": memory_status_line(memory if isinstance(memory, MemoryStore) else None),
+            "memory_facts": self._memory_payload()["facts"],
             "automations": automation_status_line(
                 automations if isinstance(automations, AutomationStore) else None
             ),
+            "automation_jobs": self._automations_payload()["jobs"],
             "auth": auth_status_line(self.auth_store),
             "google": self._google_status(),
             "mcp": mcp_status_line(),
@@ -193,8 +211,12 @@ class JarvisWebApp:
             "email": (account.email if account is not None else "") or "",
         }
 
-    def _automation_text(self) -> str:
-        return self._automation_store().format_list()
+    def _memory_store(self) -> MemoryStore:
+        orch = self.orchestrator
+        store = getattr(orch, "memory_store", None) if orch is not None else None
+        if isinstance(store, MemoryStore):
+            return store
+        return MemoryStore()
 
     def _automation_store(self) -> AutomationStore:
         orch = self.orchestrator
@@ -202,6 +224,169 @@ class JarvisWebApp:
         if isinstance(store, AutomationStore):
             return store
         return AutomationStore()
+
+    def _memory_payload(self) -> dict:
+        store = self._memory_store()
+        return {
+            "facts": [fact.to_dict() for fact in store.list_facts()],
+            "status": store.status_line(),
+        }
+
+    def _automations_payload(self) -> dict:
+        store = self._automation_store()
+        return {
+            "text": store.format_list(),
+            "jobs": [job.to_dict() for job in store.list_jobs()],
+            "status": store.status_line(),
+        }
+
+    def _local_writes_ok(self) -> bool:
+        return self._accepts_key_install()
+
+    def _refuse_remote_writes(self) -> UiResponse | None:
+        if self._local_writes_ok():
+            return None
+        return _json(
+            403,
+            {"error": "Memory and automations can only be edited on localhost."},
+        )
+
+    def _remember_fact(self, body: bytes) -> UiResponse:
+        blocked = self._refuse_remote_writes()
+        if blocked is not None:
+            return blocked
+        payload, error = _json_object(body, 'Send JSON like {"text": "I live in Austin"}.')
+        if error is not None:
+            return error
+        text = str(payload.get("text") or payload.get("fact") or "").strip()
+        if not text:
+            return _json(400, {"error": "Type a fact to remember first."})
+        with self._lock:
+            message = self._memory_store().remember(text)
+        data = self._memory_payload()
+        data.update({"ok": True, "message": message})
+        return _json(200, data)
+
+    def _forget_fact(self, body: bytes) -> UiResponse:
+        blocked = self._refuse_remote_writes()
+        if blocked is not None:
+            return blocked
+        payload, error = _json_object(body, 'Send JSON like {"id": "abc123"}.')
+        if error is not None:
+            return error
+        query = str(payload.get("id") or payload.get("query") or "").strip()
+        if not query:
+            return _json(400, {"error": "Say which fact to forget (id or matching words)."})
+        with self._lock:
+            message = self._memory_store().forget(query)
+        data = self._memory_payload()
+        data.update({"ok": True, "message": message})
+        status = 200
+        if message.startswith("No remembered fact"):
+            status = 404
+        return _json(status, data)
+
+    def _add_automation(self, body: bytes) -> UiResponse:
+        blocked = self._refuse_remote_writes()
+        if blocked is not None:
+            return blocked
+        payload, error = _json_object(
+            body,
+            'Send JSON like {"kind": "remind", "title": "stretch", "when": "in 10 minutes"}.',
+        )
+        if error is not None:
+            return error
+        kind = str(payload.get("kind") or "remind").strip().lower() or "remind"
+        title = str(payload.get("title") or payload.get("text") or "").strip()
+        when = str(payload.get("when") or payload.get("schedule") or "").strip()
+        message = str(payload.get("message") or "").strip()
+        prompt = str(payload.get("prompt") or "").strip()
+        if kind == "run" and not title:
+            title = prompt
+        if kind != "run" and not title:
+            title = message
+        if not title:
+            return _json(400, {"error": "Give the automation a title, reminder text, or prompt."})
+        if not when:
+            return _json(
+                400,
+                {"error": "Say when to run it, for example 'in 10 minutes' or 'every morning'."},
+            )
+        try:
+            schedule = parse_schedule(when)
+            with self._lock:
+                job = self._automation_store().add(
+                    kind=kind,
+                    title=title,
+                    schedule=schedule,
+                    message=message or (title if kind == "remind" else ""),
+                    prompt=prompt or (title if kind == "run" else ""),
+                )
+        except ScheduleParseError as exc:
+            return _json(400, {"error": str(exc)})
+        except ValueError as exc:
+            return _json(400, {"error": str(exc)})
+        data = self._automations_payload()
+        data.update(
+            {
+                "ok": True,
+                "job": job.to_dict(),
+                "message": f"Scheduled ({job.id}): {job.summary_line().lstrip('- ').strip()}",
+            }
+        )
+        return _json(200, data)
+
+    def _cancel_automation(self, body: bytes) -> UiResponse:
+        blocked = self._refuse_remote_writes()
+        if blocked is not None:
+            return blocked
+        payload, error = _json_object(body, 'Send JSON like {"id": "abc123"}.')
+        if error is not None:
+            return error
+        query = str(payload.get("id") or payload.get("query") or "").strip()
+        if not query:
+            return _json(400, {"error": "Say which automation to cancel (id or matching words)."})
+        with self._lock:
+            removed = self._automation_store().cancel(query)
+        data = self._automations_payload()
+        if not removed:
+            data.update({"ok": False, "error": f"No automation matched '{query}'."})
+            return _json(404, data)
+        data.update(
+            {
+                "ok": True,
+                "cancelled": [job.to_dict() for job in removed],
+                "message": "Cancelled:\n" + "\n".join(job.summary_line() for job in removed),
+            }
+        )
+        return _json(200, data)
+
+    def _set_automation_enabled(self, body: bytes, enabled: bool) -> UiResponse:
+        blocked = self._refuse_remote_writes()
+        if blocked is not None:
+            return blocked
+        payload, error = _json_object(body, 'Send JSON like {"id": "abc123"}.')
+        if error is not None:
+            return error
+        query = str(payload.get("id") or payload.get("query") or "").strip()
+        if not query:
+            verb = "resume" if enabled else "pause"
+            return _json(400, {"error": f"Say which automation to {verb} (id or matching words)."})
+        with self._lock:
+            changed = self._automation_store().set_enabled(query, enabled)
+        data = self._automations_payload()
+        if not changed:
+            data.update({"ok": False, "error": f"No automation matched '{query}'."})
+            return _json(404, data)
+        action = "Resumed" if enabled else "Paused"
+        data.update(
+            {
+                "ok": True,
+                "jobs": data["jobs"],
+                "message": f"{action}:\n" + "\n".join(job.summary_line() for job in changed),
+            }
+        )
+        return _json(200, data)
 
     def _scheduler_status(self) -> dict:
         thread = self._ticker_thread
@@ -488,6 +673,7 @@ def serve(
         print(f"Same key as the REPL · {settings.summary()}", flush=True)
     print(
         "Connect Google from this page (OAuth, not a second AI key). "
+        "Remember facts and schedule automations in the sidebar — no extra API key. "
         "Reminders fire in the background while this UI is open "
         f"(every {int(app.tick_seconds)}s) — no extra cron. "
         "Only localhost can connect. Ctrl+C to stop.",
@@ -578,6 +764,16 @@ def _oauth_page(status: int, message: str, redirect: str | None = None) -> UiRes
         f"<p>{safe}</p>{link}</body></html>"
     )
     return UiResponse(status, html.encode("utf-8"), "text/html; charset=utf-8")
+
+
+def _json_object(body: bytes, hint: str) -> tuple[dict | None, UiResponse | None]:
+    try:
+        payload = json.loads((body or b"").decode("utf-8") or "{}")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None, _json(400, {"error": hint})
+    if not isinstance(payload, dict):
+        return None, _json(400, {"error": hint})
+    return payload, None
 
 
 def _json(status: int, payload: dict) -> UiResponse:
