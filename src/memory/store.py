@@ -136,6 +136,10 @@ class MemoryStore:
             "turns": [turn.to_dict() for turn in self.turns],
         }
 
+    def list_facts(self) -> list[MemoryFact]:
+        """Copy of durable facts for the UI and APIs."""
+        return list(self.facts)
+
     def remember(self, text: str) -> str:
         fact_text = _clip(str(text or ""), _MAX_FACT_CHARS)
         if not fact_text:

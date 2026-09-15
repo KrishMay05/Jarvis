@@ -9,6 +9,7 @@ from src.auth.store import AuthAccount, AuthStore
 from src.automation.schedule import parse_schedule, utc_now
 from src.automation.store import AutomationStore
 from src.config import LLMSettings, describe_runtime
+from src.memory.store import MemoryStore
 from src.ui.server import MAX_BODY_BYTES, JarvisWebApp
 
 PASTE_KEY = "sk-ui-paste-secret-do-not-echo"
@@ -45,6 +46,8 @@ def test_index_is_self_contained_html():
     assert "/api/chat" in html
     assert "/api/status" in html
     assert "/api/due" in html
+    assert "/api/memory" in html
+    assert "/api/automations" in html
     assert "/api/auth/google/connect" in html
     assert "Fires in the background" in html
     assert "pollDue" in html
@@ -52,6 +55,9 @@ def test_index_is_self_contained_html():
     assert "Connect Google" in html
     assert "Save key" in html
     assert "Paste Gemini" in html
+    assert "Remember" in html
+    assert "Schedule" in html
+    assert "Forget" in html
     assert "http://" not in html.split("<style>")[1].split("</style>")[0]
 
 
@@ -69,6 +75,8 @@ def test_status_without_key_is_not_ready():
     assert payload["can_install_key"] is True
     assert payload["scheduler"]["running"] is False
     assert payload["scheduler"]["pending_due"] == 0
+    assert payload["memory_facts"] == []
+    assert payload["automation_jobs"] == []
 
 
 def test_status_with_settings_lists_llm():
@@ -191,6 +199,7 @@ def test_describe_runtime_mentions_web_ui(monkeypatch):
     assert "web UI" in text
     assert "--serve" in text
     assert "paste an AI key" in text
+    assert "memory/automations" in text
     assert "Connect Google" in text
 
 
@@ -608,6 +617,213 @@ def test_http_due_poll_roundtrip():
         with urlopen(f"http://127.0.0.1:{port}/api/due", timeout=5) as resp:
             empty = json.loads(resp.read())
         assert empty["due"] == []
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_memory_crud_works_without_ai_key():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    empty = json.loads(app.dispatch("GET", "/api/memory").body)
+    assert empty["facts"] == []
+    created = app.dispatch(
+        "POST",
+        "/api/memory",
+        json.dumps({"text": "Lives in Austin"}).encode(),
+    )
+    payload = json.loads(created.body)
+    assert created.status == 200
+    assert payload["ok"] is True
+    assert len(payload["facts"]) == 1
+    assert payload["facts"][0]["text"] == "Lives in Austin"
+    fact_id = payload["facts"][0]["id"]
+    status = json.loads(app.dispatch("GET", "/api/status").body)
+    assert status["ready"] is False
+    assert status["memory_facts"][0]["id"] == fact_id
+    forgotten = app.dispatch(
+        "POST",
+        "/api/memory/forget",
+        json.dumps({"id": fact_id}).encode(),
+    )
+    gone = json.loads(forgotten.body)
+    assert forgotten.status == 200
+    assert gone["facts"] == []
+    missing = app.dispatch(
+        "POST",
+        "/api/memory/forget",
+        json.dumps({"id": fact_id}).encode(),
+    )
+    assert missing.status == 404
+
+
+def test_memory_rejects_empty_and_invalid_json():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    empty = app.dispatch("POST", "/api/memory", b'{"text":"  "}')
+    assert empty.status == 400
+    bad = app.dispatch("POST", "/api/memory", b"not-json")
+    assert bad.status == 400
+    forget = app.dispatch("POST", "/api/memory/forget", b'{"id":""}')
+    assert forget.status == 400
+
+
+def test_automations_crud_works_without_ai_key():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    created = app.dispatch(
+        "POST",
+        "/api/automations",
+        json.dumps(
+            {
+                "kind": "remind",
+                "title": "stretch",
+                "when": "in 10 minutes",
+                "message": "stretch",
+            }
+        ).encode(),
+    )
+    payload = json.loads(created.body)
+    assert created.status == 200
+    assert payload["ok"] is True
+    assert len(payload["jobs"]) == 1
+    assert payload["jobs"][0]["title"] == "stretch"
+    assert "stretch" in payload["text"]
+    job_id = payload["jobs"][0]["id"]
+    paused = app.dispatch(
+        "POST",
+        "/api/automations/pause",
+        json.dumps({"id": job_id}).encode(),
+    )
+    assert paused.status == 200
+    assert json.loads(paused.body)["jobs"][0]["enabled"] is False
+    resumed = app.dispatch(
+        "POST",
+        "/api/automations/enable",
+        json.dumps({"id": job_id}).encode(),
+    )
+    assert resumed.status == 200
+    assert json.loads(resumed.body)["jobs"][0]["enabled"] is True
+    cancelled = app.dispatch(
+        "POST",
+        "/api/automations/cancel",
+        json.dumps({"id": job_id}).encode(),
+    )
+    gone = json.loads(cancelled.body)
+    assert cancelled.status == 200
+    assert gone["jobs"] == []
+    missing = app.dispatch(
+        "POST",
+        "/api/automations/cancel",
+        json.dumps({"id": job_id}).encode(),
+    )
+    assert missing.status == 404
+
+
+def test_add_run_automation_and_reject_bad_schedule():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    created = app.dispatch(
+        "POST",
+        "/api/automations",
+        json.dumps(
+            {
+                "kind": "run",
+                "title": "research the weather",
+                "when": "every morning",
+            }
+        ).encode(),
+    )
+    payload = json.loads(created.body)
+    assert created.status == 200
+    assert payload["job"]["kind"] == "run"
+    assert payload["job"]["prompt"] == "research the weather"
+    bad = app.dispatch(
+        "POST",
+        "/api/automations",
+        json.dumps({"kind": "remind", "title": "nope", "when": "whenever"}).encode(),
+    )
+    assert bad.status == 400
+    empty = app.dispatch("POST", "/api/automations", b'{"kind":"remind"}')
+    assert empty.status == 400
+
+
+def test_memory_and_automation_writes_refuse_non_loopback():
+    app = JarvisWebApp(
+        missing_key="No AI API key found.",
+        public_base="http://192.168.1.20:8787",
+    )
+    memory = app.dispatch(
+        "POST",
+        "/api/memory",
+        json.dumps({"text": "secret fact"}).encode(),
+    )
+    assert memory.status == 403
+    job = app.dispatch(
+        "POST",
+        "/api/automations",
+        json.dumps({"kind": "remind", "title": "stretch", "when": "in 5 minutes"}).encode(),
+    )
+    assert job.status == 403
+    listed = json.loads(app.dispatch("GET", "/api/memory").body)
+    assert listed["facts"] == []
+
+
+def test_memory_and_automations_use_orchestrator_stores():
+    memory = MemoryStore()
+    automations = AutomationStore()
+    orch = FakeOrchestrator()
+    orch.memory_store = memory
+    orch.automation_store = automations
+    app = JarvisWebApp(
+        orchestrator=orch,
+        settings=LLMSettings(provider="openai", api_key="sk-test", model="gpt-4o-mini"),
+    )
+    remembered = app.dispatch(
+        "POST",
+        "/api/memory",
+        json.dumps({"text": "Home city is Austin"}).encode(),
+    )
+    assert remembered.status == 200
+    assert any("Austin" in fact.text for fact in memory.facts)
+    scheduled = app.dispatch(
+        "POST",
+        "/api/automations",
+        json.dumps({"kind": "remind", "title": "water", "when": "in 20 minutes"}).encode(),
+    )
+    assert scheduled.status == 200
+    assert any(job.title == "water" for job in automations.jobs)
+
+
+def test_http_memory_and_automation_roundtrip():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    httpd = app.make_server("127.0.0.1", 0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = httpd.server_address[1]
+        app.public_base = f"http://127.0.0.1:{port}"
+        remember = Request(
+            f"http://127.0.0.1:{port}/api/memory",
+            data=json.dumps({"text": "Prefers Celsius"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(remember, timeout=5) as resp:
+            memory = json.loads(resp.read())
+        assert memory["facts"][0]["text"] == "Prefers Celsius"
+        schedule = Request(
+            f"http://127.0.0.1:{port}/api/automations",
+            data=json.dumps(
+                {"kind": "remind", "title": "tea", "when": "in 15 minutes"}
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(schedule, timeout=5) as resp:
+            jobs = json.loads(resp.read())
+        assert jobs["jobs"][0]["title"] == "tea"
+        with urlopen(f"http://127.0.0.1:{port}/api/status", timeout=5) as resp:
+            status = json.loads(resp.read())
+        assert status["ready"] is False
+        assert status["memory_facts"][0]["text"] == "Prefers Celsius"
+        assert status["automation_jobs"][0]["title"] == "tea"
     finally:
         httpd.shutdown()
         httpd.server_close()

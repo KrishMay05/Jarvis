@@ -67,7 +67,7 @@
       .pill.bad { color: var(--danger); }
       .layout {
         display: grid;
-        grid-template-columns: 280px 1fr;
+        grid-template-columns: 300px 1fr;
         gap: 16px;
         min-height: 0;
       }
@@ -190,13 +190,34 @@
         font-weight: 650;
       }
       button.ghost { color: var(--muted); }
+      .manage-list { display: grid; gap: 6px; margin-top: 8px; }
+      .manage-item {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        align-items: start;
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.18);
+      }
+      .manage-item p { margin: 0; }
+      .manage-item .when { font-size: 0.72rem; color: var(--muted); margin-top: 4px; }
+      .manage-item button { padding: 4px 8px; font-size: 0.68rem; }
+      .manage-actions { display: flex; flex-direction: column; gap: 4px; }
       .key-form {
         display: grid;
+        grid-template-columns: 1fr;
         gap: 8px;
         margin-top: 10px;
+        padding: 0;
+        border: 0;
+      }
+      .key-form input, .key-form select, .key-form button {
+        width: 100%;
+        min-height: 36px;
       }
       .key-form input, .key-form select {
-        width: 100%;
         background: #0b1017;
         color: var(--ink);
         border: 1px solid var(--line);
@@ -205,6 +226,7 @@
         font: inherit;
         font-size: 0.82rem;
       }
+      .key-form input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
       .key-form input:focus, .key-form select:focus { outline: 1px solid var(--gold); }
       .hint { color: var(--muted); font-size: 0.78rem; padding: 0 16px 12px; }
       @media (max-width: 860px) {
@@ -244,9 +266,24 @@
           <div id="tools" class="tools"></div>
           <h2>Memory</h2>
           <p id="memory" class="meta"></p>
+          <div id="memory-list" class="manage-list"></div>
+          <form id="memory-form" class="key-form">
+            <input id="memory-text" autocomplete="off" spellcheck="true" placeholder="I live in Austin" />
+            <button type="submit" id="remember-fact" class="secondary">Remember</button>
+          </form>
           <h2>Automations</h2>
           <p id="automations" class="meta"></p>
           <p id="scheduler" class="meta"></p>
+          <div id="automation-list" class="manage-list"></div>
+          <form id="automation-form" class="key-form">
+            <select id="automation-kind" aria-label="Automation kind">
+              <option value="remind">Remind me</option>
+              <option value="run">Run a prompt</option>
+            </select>
+            <input id="automation-title" autocomplete="off" placeholder="Stretch / research the weather" />
+            <input id="automation-when" autocomplete="off" placeholder="in 10 minutes, every morning…" />
+            <button type="submit" id="schedule-job" class="secondary">Schedule</button>
+          </form>
           <h2>Auth</h2>
           <p id="auth" class="meta"></p>
           <div class="auth-actions">
@@ -263,7 +300,7 @@
             <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox"></textarea>
             <button id="send" type="submit">Send</button>
           </form>
-          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. Reminders fire in the background while this page is open (no extra cron). A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
+          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. Remember facts and schedule automations here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
         </section>
       </div>
     </div>
@@ -320,7 +357,9 @@
         send.disabled = !ready;
         document.getElementById("llm").textContent = data.error || (data.runtime || "Ready.");
         document.getElementById("memory").textContent = data.memory || "";
+        renderFacts(data.memory_facts || []);
         document.getElementById("automations").textContent = data.automations || "";
+        renderJobs(data.automation_jobs || []);
         const scheduler = data.scheduler || {};
         const schedEl = document.getElementById("scheduler");
         if (scheduler.running) {
@@ -350,10 +389,10 @@
         });
         if (!log.childElementCount) {
           if (ready) {
-            add("At your service. Weather, research, memory, automations, computer use, mail, and calendar — one AI key. Reminders fire here while the page is open. Connect Google in the sidebar when you want inbox and calendar.", "jarvis");
+            add("At your service. Weather, research, memory, automations, computer use, mail, and calendar — one AI key. Remember facts and schedule reminders in the sidebar without chatting. Reminders fire here while the page is open. Connect Google in the sidebar when you want inbox and calendar.", "jarvis");
           } else {
             add(data.error || "Paste one AI API key in the sidebar. No .env edit and no restart.", "system");
-            add("You can still connect Google for mail and calendar without an AI key.", "system");
+            add("You can still remember facts, schedule reminders, and connect Google without an AI key.", "system");
           }
         }
       }
@@ -373,6 +412,168 @@
           hint.textContent = "Connect Google here — no extra AI key. Chat can stay paused.";
         }
       }
+
+      function renderFacts(facts) {
+        const list = document.getElementById("memory-list");
+        list.replaceChildren();
+        if (!facts.length) {
+          const empty = document.createElement("p");
+          empty.className = "meta";
+          empty.textContent = "None yet. Add a fact here — no extra API key, and chat can stay paused.";
+          list.appendChild(empty);
+          return;
+        }
+        facts.forEach((fact) => {
+          const row = document.createElement("div");
+          row.className = "manage-item";
+          const text = document.createElement("p");
+          text.className = "meta";
+          text.textContent = fact.text || "";
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ghost";
+          btn.textContent = "Forget";
+          btn.addEventListener("click", () => forgetFact(fact.id));
+          row.appendChild(text);
+          row.appendChild(btn);
+          list.appendChild(row);
+        });
+      }
+
+      function renderJobs(jobs) {
+        const list = document.getElementById("automation-list");
+        list.replaceChildren();
+        if (!jobs.length) {
+          const empty = document.createElement("p");
+          empty.className = "meta";
+          empty.textContent = "None scheduled. Add one here or say remind me — still no extra API key.";
+          list.appendChild(empty);
+          return;
+        }
+        jobs.forEach((job) => {
+          const row = document.createElement("div");
+          row.className = "manage-item";
+          const body = document.createElement("div");
+          const title = document.createElement("p");
+          title.className = "meta";
+          const state = job.enabled ? "on" : "paused";
+          title.textContent = (job.kind || "remind") + " · " + (job.title || "");
+          const when = document.createElement("p");
+          when.className = "when";
+          when.textContent = state + " · next " + (job.next_run_at || "done");
+          body.appendChild(title);
+          body.appendChild(when);
+          const actions = document.createElement("div");
+          actions.className = "manage-actions";
+          const pause = document.createElement("button");
+          pause.type = "button";
+          pause.className = "ghost";
+          pause.textContent = job.enabled ? "Pause" : "Resume";
+          pause.addEventListener("click", () => setJobEnabled(job.id, !job.enabled));
+          const cancel = document.createElement("button");
+          cancel.type = "button";
+          cancel.className = "ghost";
+          cancel.textContent = "Cancel";
+          cancel.addEventListener("click", () => cancelJob(job.id));
+          actions.appendChild(pause);
+          actions.appendChild(cancel);
+          row.appendChild(body);
+          row.appendChild(actions);
+          list.appendChild(row);
+        });
+      }
+
+      async function postJson(url, body) {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        return { res, data };
+      }
+
+      async function forgetFact(id) {
+        try {
+          const { res, data } = await postJson("/api/memory/forget", { id });
+          add(data.message || data.error || "Forgot that fact.", res.ok ? "system" : "system");
+        } catch (err) {
+          add("Could not forget that fact.", "system");
+        }
+        await refreshStatus();
+      }
+
+      async function cancelJob(id) {
+        try {
+          const { res, data } = await postJson("/api/automations/cancel", { id });
+          add(data.message || data.error || "Cancelled that automation.", "system");
+        } catch (err) {
+          add("Could not cancel that automation.", "system");
+        }
+        await refreshStatus();
+      }
+
+      async function setJobEnabled(id, enabled) {
+        const url = enabled ? "/api/automations/enable" : "/api/automations/pause";
+        try {
+          const { data } = await postJson(url, { id });
+          add(data.message || data.error || "Updated that automation.", "system");
+        } catch (err) {
+          add("Could not update that automation.", "system");
+        }
+        await refreshStatus();
+      }
+
+      document.getElementById("memory-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const input = document.getElementById("memory-text");
+        const text = input.value.trim();
+        if (!text) {
+          add("Type a fact to remember first.", "system");
+          return;
+        }
+        try {
+          const { res, data } = await postJson("/api/memory", { text });
+          if (!res.ok) {
+            add(data.error || "Could not remember that.", "system");
+          } else {
+            input.value = "";
+            add(data.message || "Remembered.", "system");
+          }
+        } catch (err) {
+          add("Could not reach the local Jarvis server.", "system");
+        }
+        await refreshStatus();
+      });
+
+      document.getElementById("automation-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const titleInput = document.getElementById("automation-title");
+        const whenInput = document.getElementById("automation-when");
+        const kind = document.getElementById("automation-kind").value;
+        const title = titleInput.value.trim();
+        const when = whenInput.value.trim();
+        if (!title || !when) {
+          add("Give the automation something to do and when to run it (for example: in 10 minutes).", "system");
+          return;
+        }
+        const body = { kind, title, when };
+        if (kind === "run") body.prompt = title;
+        else body.message = title;
+        try {
+          const { res, data } = await postJson("/api/automations", body);
+          if (!res.ok) {
+            add(data.error || "Could not schedule that.", "system");
+          } else {
+            titleInput.value = "";
+            whenInput.value = "";
+            add(data.message || "Scheduled.", "system");
+          }
+        } catch (err) {
+          add("Could not reach the local Jarvis server.", "system");
+        }
+        await refreshStatus();
+      });
 
       keyForm.addEventListener("submit", async (event) => {
         event.preventDefault();

@@ -74,6 +74,15 @@ def test_forget_matches_id(tmp_path):
     assert store.facts == []
 
 
+def test_list_facts_returns_a_copy(tmp_path):
+    store = MemoryStore(tmp_path / "memory.json")
+    store.remember("Prefers dark mode")
+    listed = store.list_facts()
+    assert listed[0].text == "Prefers dark mode"
+    listed.clear()
+    assert len(store.facts) == 1
+
+
 def test_memory_tool_parses_phrases_and_dicts(tmp_path):
     tool = MemoryTool(MemoryStore(tmp_path / "memory.json"))
     assert "Remembered" in tool.use("I drink tea in the morning")
