@@ -2,7 +2,7 @@
 
 A personal assistant you can run locally. Drop in **one AI API key** (Gemini, OpenAI, or Anthropic) and the built-in tools work — no weather key, no search key, no extra accounts.
 
-An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, scheduled automations, computer use (open public web pages), **mail and calendar** (Google OAuth from the CLI or the localhost UI), general chat, and any **MCP** servers you connect. Talk to it in the terminal or at a **localhost web UI** (`python main.py --serve`). The sidebar lists remembered facts and scheduled jobs so you can add, forget, pause, or cancel them without chatting.
+An orchestrator classifies intent, then specialist agents handle weather, local time, research, persistent memory, scheduled automations, computer use (open public web pages), **mail and calendar** (Google OAuth from the CLI or the localhost UI), general chat, and any **MCP** servers you connect. Talk to it in the terminal or at a **localhost web UI** (`python main.py --serve`). The sidebar lists remembered facts, scheduled jobs, and MCP servers so you can add, forget, pause, cancel, or connect them without chatting.
 
 ## Setup
 
@@ -83,12 +83,12 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Computer use | Open public http(s) pages, read the text, follow on-page links (no extra key) |
 | Mail | Gmail inbox/search after Connect Google in the web UI or `python main.py --connect google` (OAuth, not an AI key) |
 | Calendar | Upcoming Google Calendar events after the same Google login |
-| MCP tools | Local stdio servers from `mcp.json` (no extra AI key) |
+| MCP tools | Local stdio servers from `mcp.json` or the localhost UI MCP editor (no extra AI key) |
 | Web UI | `python main.py --serve` on 127.0.0.1 (paste the AI key in the sidebar or use `.env`; Connect Google there too) |
 
 ## MCP connections
 
-Third-party tools plug in through the [Model Context Protocol](https://modelcontextprotocol.io/) without new Python modules and without a second AI vendor key. Copy `mcp.json.example` to `mcp.json` (gitignored) or `~/.jarvis/mcp.json`:
+Third-party tools plug in through the [Model Context Protocol](https://modelcontextprotocol.io/) without new Python modules and without a second AI vendor key. Add servers in the localhost UI sidebar, or copy `mcp.json.example` to `mcp.json` (gitignored) or `~/.jarvis/mcp.json`:
 
 ```json
 {
@@ -102,6 +102,8 @@ Third-party tools plug in through the [Model Context Protocol](https://modelcont
 ```
 
 Jarvis speaks the standard stdio JSON-RPC transport (`initialize`, `tools/list`, `tools/call`). A connected server becomes the **MCP Agent**. Override the config path with `JARVIS_MCP_CONFIG`. Broken servers are skipped so weather, time, and research still work.
+
+In the localhost UI, the **MCP** sidebar lists saved servers. Add, disable, enable, remove, or reload them there without chatting and without an AI key. Env values stay on disk (mode 0600) and are not returned by the API. If chat is already unlocked, Jarvis reconnects the MCP Agent immediately — no restart.
 
 `--status` lists configured servers without spawning them.
 
@@ -204,14 +206,15 @@ The REPL is optional. Start the UI even before you have a key:
 python main.py --serve --open
 ```
 
-Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. **Paste one AI key** there to unlock chat without editing `.env` or restarting. **Remember facts and schedule automations** in that same sidebar — no chat phrasing and no extra API key. **Connect Google** and **Disconnect** live there too — same OAuth as `--connect google`. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar. **Due reminders appear in the chat log on their own** while `--serve` is running; you do not need to send a message or set up system cron for that.
+Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. **Paste one AI key** there to unlock chat without editing `.env` or restarting. **Remember facts, schedule automations, and connect MCP servers** in that same sidebar — no chat phrasing and no extra API key. **Connect Google** and **Disconnect** live there too — same OAuth as `--connect google`. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar, MCP tools. **Due reminders appear in the chat log on their own** while `--serve` is running; you do not need to send a message or set up system cron for that.
 
 - No extra API key and no cloud UI vendor
 - Binds to loopback so the assistant is not on your LAN
-- Works without a key too: paste a Gemini / OpenAI / Anthropic key in the sidebar (saved to local `.env`), remember facts, schedule reminders, or keep chat paused and still connect Google
+- Works without a key too: paste a Gemini / OpenAI / Anthropic key in the sidebar (saved to local `.env`), remember facts, schedule reminders, add MCP servers, or keep chat paused and still connect Google
 - Status/health are JSON at `/api/status` and `/api/health` (including optional LLM fallbacks)
 - Memory facts are JSON at `/api/memory` (`POST` to add, `/api/memory/forget` to drop)
 - Automations are JSON at `/api/automations` (`POST` to add, `/cancel`, `/pause`, `/enable`)
+- MCP servers are JSON at `/api/mcp` (`POST` to add/update, `/remove`, `/disable`, `/enable`, `/reload`)
 - Due automations are JSON at `/api/due` (consumed by the page poll)
 - Saving a key is `POST /api/key` on localhost only — the key is never returned in API responses
 - Google OAuth callback is `/oauth/google/callback` on the same localhost server
@@ -234,11 +237,11 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 - `src/computer/` — public-web fetch, HTML extract, and in-process link following
 - `src/config.py` — one-key provider detection (extra keys are optional LLM backups)
 - `src/llm.py` — Gemini / OpenAI / Anthropic client with automatic provider failover
-- `src/mcp/` — stdio MCP client and `mcp.json` loader
+- `src/mcp/` — stdio MCP client, `mcp.json` loader, and localhost UI save/reload
 - `src/memory/` — local persistent facts and recent turns
 - `src/orchestrator.py` — routes a request, loops specialists, then answers
 - `src/tools/` — weather, time, research, memory, automation, computer, mail, calendar, MCP adapters
-- `src/ui/` — localhost web chat UI (`--serve`; background automation ticker; memory and automation editors)
+- `src/ui/` — localhost web chat UI (`--serve`; background automation ticker; memory, automation, and MCP editors)
 - `tests/` — unit tests that do not need live API keys
 
 ## Roadmap
@@ -259,5 +262,6 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 12. ~~Paste an AI key from the localhost UI~~ (no `.env` edit, no restart; still one key)
 13. ~~Background automation ticker in `--serve`~~ (due reminders appear in the UI without cron or another chat)
 14. ~~Memory and automation editors in the localhost UI~~ (list/add/forget facts and schedule/pause/cancel jobs without chatting)
-15. Desktop / JS-capable computer use (Playwright or screenshot+input)
-16. Microsoft / Outlook OAuth using the same auth store
+15. ~~MCP editor in the localhost UI~~ (add/disable/remove/reload stdio servers without editing `mcp.json` by hand)
+16. Desktop / JS-capable computer use (Playwright or screenshot+input)
+17. Microsoft / Outlook OAuth using the same auth store

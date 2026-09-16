@@ -15,6 +15,7 @@ class McpManager:
         self.sessions: list[McpSession] = []
         self.tools: list[Tool] = []
         self.failures: list[str] = []
+        self.failure_by_name: dict[str, str] = {}
 
     def start(self) -> "McpManager":
         for spec in self.config.enabled_servers:
@@ -23,6 +24,7 @@ class McpManager:
                 session.start()
             except McpError as exc:
                 self.failures.append(str(exc))
+                self.failure_by_name[spec.name] = str(exc)
                 log_message(str(exc), "ERROR")
                 continue
             self.sessions.append(session)

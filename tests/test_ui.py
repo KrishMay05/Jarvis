@@ -48,6 +48,8 @@ def test_index_is_self_contained_html():
     assert "/api/due" in html
     assert "/api/memory" in html
     assert "/api/automations" in html
+    assert "/api/mcp" in html
+    assert "/api/mcp/remove" in html
     assert "/api/auth/google/connect" in html
     assert "Fires in the background" in html
     assert "pollDue" in html
@@ -57,6 +59,8 @@ def test_index_is_self_contained_html():
     assert "Paste Gemini" in html
     assert "Remember" in html
     assert "Schedule" in html
+    assert "Add server" in html
+    assert "Reload MCP" in html
     assert "Forget" in html
     assert "http://" not in html.split("<style>")[1].split("</style>")[0]
 
@@ -77,6 +81,7 @@ def test_status_without_key_is_not_ready():
     assert payload["scheduler"]["pending_due"] == 0
     assert payload["memory_facts"] == []
     assert payload["automation_jobs"] == []
+    assert payload["mcp_servers"] == []
 
 
 def test_status_with_settings_lists_llm():
@@ -199,7 +204,7 @@ def test_describe_runtime_mentions_web_ui(monkeypatch):
     assert "web UI" in text
     assert "--serve" in text
     assert "paste an AI key" in text
-    assert "memory/automations" in text
+    assert "memory/automations/MCP" in text
     assert "Connect Google" in text
 
 
@@ -827,3 +832,169 @@ def test_http_memory_and_automation_roundtrip():
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_mcp_crud_works_without_ai_key():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    empty = json.loads(app.dispatch("GET", "/api/mcp").body)
+    assert empty["servers"] == []
+    created = app.dispatch(
+        "POST",
+        "/api/mcp",
+        json.dumps(
+            {
+                "name": "filesystem",
+                "command": "npx",
+                "args": "-y @modelcontextprotocol/server-filesystem /tmp",
+                "env": {"TOKEN": "super-secret"},
+            }
+        ).encode(),
+    )
+    payload = json.loads(created.body)
+    assert created.status == 200
+    assert payload["ok"] is True
+    assert len(payload["servers"]) == 1
+    assert payload["servers"][0]["name"] == "filesystem"
+    assert payload["servers"][0]["args"][-1] == "/tmp"
+    assert payload["servers"][0]["env_keys"] == ["TOKEN"]
+    assert "super-secret" not in created.body.decode("utf-8")
+    status = json.loads(app.dispatch("GET", "/api/status").body)
+    assert status["ready"] is False
+    assert status["mcp_servers"][0]["name"] == "filesystem"
+    paused = app.dispatch(
+        "POST",
+        "/api/mcp/disable",
+        json.dumps({"name": "filesystem"}).encode(),
+    )
+    assert paused.status == 200
+    assert json.loads(paused.body)["servers"][0]["disabled"] is True
+    resumed = app.dispatch(
+        "POST",
+        "/api/mcp/enable",
+        json.dumps({"name": "filesystem"}).encode(),
+    )
+    assert resumed.status == 200
+    assert json.loads(resumed.body)["servers"][0]["disabled"] is False
+    reloaded = app.dispatch("POST", "/api/mcp/reload", b"{}")
+    assert reloaded.status == 200
+    removed = app.dispatch(
+        "POST",
+        "/api/mcp/remove",
+        json.dumps({"name": "filesystem"}).encode(),
+    )
+    gone = json.loads(removed.body)
+    assert removed.status == 200
+    assert gone["servers"] == []
+    missing = app.dispatch(
+        "POST",
+        "/api/mcp/remove",
+        json.dumps({"name": "filesystem"}).encode(),
+    )
+    assert missing.status == 404
+
+
+def test_mcp_rejects_empty_and_invalid_json():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    empty = app.dispatch("POST", "/api/mcp", b'{"name":"  "}')
+    assert empty.status == 400
+    bad = app.dispatch("POST", "/api/mcp", b"not-json")
+    assert bad.status == 400
+    missing_command = app.dispatch(
+        "POST",
+        "/api/mcp",
+        json.dumps({"name": "fs"}).encode(),
+    )
+    assert missing_command.status == 400
+    remove = app.dispatch("POST", "/api/mcp/remove", b'{"name":""}')
+    assert remove.status == 400
+
+
+def test_mcp_writes_refuse_non_loopback():
+    app = JarvisWebApp(
+        missing_key="No AI API key found.",
+        public_base="http://192.168.1.20:8787",
+    )
+    added = app.dispatch(
+        "POST",
+        "/api/mcp",
+        json.dumps({"name": "fs", "command": "npx"}).encode(),
+    )
+    assert added.status == 403
+    listed = json.loads(app.dispatch("GET", "/api/mcp").body)
+    assert listed["servers"] == []
+
+
+def test_http_mcp_roundtrip():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    httpd = app.make_server("127.0.0.1", 0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = httpd.server_address[1]
+        app.public_base = f"http://127.0.0.1:{port}"
+        add = Request(
+            f"http://127.0.0.1:{port}/api/mcp",
+            data=json.dumps(
+                {
+                    "name": "docs",
+                    "command": "npx",
+                    "args": ["-y", "server", "/tmp"],
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(add, timeout=5) as resp:
+            payload = json.loads(resp.read())
+        assert payload["servers"][0]["name"] == "docs"
+        with urlopen(f"http://127.0.0.1:{port}/api/status", timeout=5) as resp:
+            status = json.loads(resp.read())
+        assert status["mcp_servers"][0]["command"] == "npx"
+        remove = Request(
+            f"http://127.0.0.1:{port}/api/mcp/remove",
+            data=json.dumps({"name": "docs"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(remove, timeout=5) as resp:
+            gone = json.loads(resp.read())
+        assert gone["servers"] == []
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_ui_add_mcp_attaches_agent(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    from src.assistant import build_orchestrator
+    from src.mcp.manager import McpManager
+
+    fake = Path(__file__).resolve().parent / "fake_mcp_server.py"
+    settings = LLMSettings(provider="openai", api_key="sk-test", model="gpt-4o-mini")
+    orch = build_orchestrator(settings)
+    app = JarvisWebApp(orchestrator=orch, settings=settings)
+    try:
+        created = app.dispatch(
+            "POST",
+            "/api/mcp",
+            json.dumps(
+                {
+                    "name": "fake",
+                    "command": __import__("sys").executable,
+                    "args": [str(fake)],
+                }
+            ).encode(),
+        )
+        payload = json.loads(created.body)
+        assert created.status == 200
+        assert payload["servers"][0]["connected"] is True
+        assert "echo" in payload["servers"][0]["tools"]
+        names = {agent.name for agent in orch.agents}
+        assert "MCP Agent" in names
+        manager = next(
+            resource for resource in orch._closables if isinstance(resource, McpManager)
+        )
+        assert {tool.name() for tool in manager.tools} == {"echo", "add"}
+    finally:
+        orch.close()

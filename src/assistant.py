@@ -140,27 +140,93 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
         calendar_agent,
         chat_agent,
     ]
-    closables: list[McpManager] = []
 
-    mcp = start_mcp_manager()
-    if mcp.tools:
-        agents.append(
-            Agent(
-                Name="MCP Agent",
-                Description=mcp.agent_description(),
-                Tools=mcp.tools,
-                Model=model,
-                memory_store=memory,
-            )
-        )
-        closables.append(mcp)
-    else:
-        mcp.close()
-
-    return AgentOrchestrator(
+    orchestrator = AgentOrchestrator(
         agents,
-        closables=closables,
         memory_store=memory,
         automation_store=automations,
         auth_store=auth,
     )
+    attach_mcp(orchestrator)
+    return orchestrator
+
+
+MCP_AGENT_NAME = "MCP Agent"
+
+
+def attach_mcp(orchestrator, manager: McpManager | None = None) -> McpManager | None:
+    """Start (or restart) MCP servers on a live orchestrator.
+
+    Used by ``build_orchestrator`` and the localhost UI editor so adding a
+    server does not require a second AI key or a process restart.
+    """
+    if orchestrator is None:
+        if manager is not None:
+            manager.close()
+        return None
+    detach_mcp(orchestrator)
+    agents = getattr(orchestrator, "agents", None)
+    closables = getattr(orchestrator, "_closables", None)
+    if not isinstance(agents, list) or not isinstance(closables, list):
+        if manager is not None:
+            manager.close()
+        return None
+    mcp = manager if manager is not None else start_mcp_manager()
+    if mcp.tools:
+        model = _orchestrator_model(orchestrator)
+        agents.append(
+            Agent(
+                Name=MCP_AGENT_NAME,
+                Description=mcp.agent_description(),
+                Tools=mcp.tools,
+                Model=model,
+                memory_store=getattr(orchestrator, "memory_store", None),
+            )
+        )
+        closables.append(mcp)
+        return mcp
+    if mcp.failures:
+        closables.append(mcp)
+        return mcp
+    mcp.close()
+    return mcp
+
+
+def detach_mcp(orchestrator) -> None:
+    """Stop MCP subprocesses and drop the MCP Agent without closing Jarvis."""
+    if orchestrator is None:
+        return
+    closables = getattr(orchestrator, "_closables", None)
+    if isinstance(closables, list):
+        kept: list = []
+        for resource in closables:
+            if isinstance(resource, McpManager):
+                try:
+                    resource.close()
+                except Exception:
+                    pass
+            else:
+                kept.append(resource)
+        closables[:] = kept
+    agents = getattr(orchestrator, "agents", None)
+    if isinstance(agents, list):
+        agents[:] = [agent for agent in agents if getattr(agent, "name", "") != MCP_AGENT_NAME]
+
+
+def mcp_manager_of(orchestrator) -> McpManager | None:
+    if orchestrator is None:
+        return None
+    for resource in getattr(orchestrator, "_closables", []) or []:
+        if isinstance(resource, McpManager):
+            return resource
+    return None
+
+
+def _orchestrator_model(orchestrator) -> str:
+    for agent in getattr(orchestrator, "agents", []) or []:
+        model = getattr(agent, "model", None)
+        if model:
+            return str(model)
+    settings = getattr(orchestrator, "settings", None)
+    model = getattr(settings, "model", None)
+    return str(model) if model else "unknown"
