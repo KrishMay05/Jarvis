@@ -293,14 +293,24 @@
           <p id="auth-hint" class="meta"></p>
           <h2>MCP</h2>
           <p id="mcp" class="meta"></p>
+          <div id="mcp-list" class="manage-list"></div>
+          <form id="mcp-form" class="key-form">
+            <input id="mcp-name" autocomplete="off" spellcheck="false" placeholder="filesystem" />
+            <input id="mcp-command" autocomplete="off" spellcheck="false" placeholder="npx" />
+            <input id="mcp-args" autocomplete="off" spellcheck="false" placeholder="-y @modelcontextprotocol/server-filesystem /tmp" />
+            <button type="submit" id="add-mcp" class="secondary">Add server</button>
+          </form>
+          <div class="auth-actions">
+            <button type="button" id="reload-mcp" class="ghost">Reload MCP</button>
+          </div>
         </aside>
         <section class="chat">
           <div id="log"></div>
           <form id="composer">
-            <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox"></textarea>
+            <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox, MCP tools"></textarea>
             <button id="send" type="submit">Send</button>
           </form>
-          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. Remember facts and schedule automations here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
+          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. Remember facts, schedule automations, and connect MCP servers here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
         </section>
       </div>
     </div>
@@ -369,6 +379,7 @@
         }
         document.getElementById("auth").textContent = data.auth || "";
         document.getElementById("mcp").textContent = data.mcp || "";
+        renderMcp(data.mcp_servers || []);
         const keyStatus = document.getElementById("key-status");
         if (ready) {
           keyStatus.textContent = (data.llm && data.llm.summary)
@@ -389,10 +400,10 @@
         });
         if (!log.childElementCount) {
           if (ready) {
-            add("At your service. Weather, research, memory, automations, computer use, mail, and calendar — one AI key. Remember facts and schedule reminders in the sidebar without chatting. Reminders fire here while the page is open. Connect Google in the sidebar when you want inbox and calendar.", "jarvis");
+            add("At your service. Weather, research, memory, automations, computer use, mail, calendar, and MCP — one AI key. Remember facts, schedule reminders, and connect MCP servers in the sidebar without chatting. Reminders fire here while the page is open. Connect Google in the sidebar when you want inbox and calendar.", "jarvis");
           } else {
             add(data.error || "Paste one AI API key in the sidebar. No .env edit and no restart.", "system");
-            add("You can still remember facts, schedule reminders, and connect Google without an AI key.", "system");
+            add("You can still remember facts, schedule reminders, connect MCP servers, and connect Google without an AI key.", "system");
           }
         }
       }
@@ -524,6 +535,78 @@
         await refreshStatus();
       }
 
+      function renderMcp(servers) {
+        const list = document.getElementById("mcp-list");
+        list.replaceChildren();
+        if (!servers.length) {
+          const empty = document.createElement("p");
+          empty.className = "meta";
+          empty.textContent = "None connected. Add a stdio server here — still no extra AI key.";
+          list.appendChild(empty);
+          return;
+        }
+        servers.forEach((server) => {
+          const row = document.createElement("div");
+          row.className = "manage-item";
+          const body = document.createElement("div");
+          const title = document.createElement("p");
+          title.className = "meta";
+          const args = (server.args || []).join(" ");
+          title.textContent = (server.name || "") + " · " + (server.command || "") + (args ? " " + args : "");
+          const when = document.createElement("p");
+          when.className = "when";
+          let state = "saved";
+          if (server.disabled) state = "disabled";
+          else if (server.connected) state = "connected";
+          else if (server.error) state = "failed";
+          const tools = (server.tools || []).slice(0, 6).join(", ");
+          const extra = server.error
+            ? server.error
+            : (tools ? "tools: " + tools : "no tools yet");
+          when.textContent = state + " · " + extra;
+          body.appendChild(title);
+          body.appendChild(when);
+          const actions = document.createElement("div");
+          actions.className = "manage-actions";
+          const toggle = document.createElement("button");
+          toggle.type = "button";
+          toggle.className = "ghost";
+          toggle.textContent = server.disabled ? "Enable" : "Disable";
+          toggle.addEventListener("click", () => setMcpEnabled(server.name, server.disabled));
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "ghost";
+          remove.textContent = "Remove";
+          remove.addEventListener("click", () => removeMcp(server.name));
+          actions.appendChild(toggle);
+          actions.appendChild(remove);
+          row.appendChild(body);
+          row.appendChild(actions);
+          list.appendChild(row);
+        });
+      }
+
+      async function removeMcp(name) {
+        try {
+          const { data } = await postJson("/api/mcp/remove", { name });
+          add(data.message || data.error || "Removed that MCP server.", "system");
+        } catch (err) {
+          add("Could not remove that MCP server.", "system");
+        }
+        await refreshStatus();
+      }
+
+      async function setMcpEnabled(name, enable) {
+        const url = enable ? "/api/mcp/enable" : "/api/mcp/disable";
+        try {
+          const { data } = await postJson(url, { name });
+          add(data.message || data.error || "Updated that MCP server.", "system");
+        } catch (err) {
+          add("Could not update that MCP server.", "system");
+        }
+        await refreshStatus();
+      }
+
       document.getElementById("memory-form").addEventListener("submit", async (event) => {
         event.preventDefault();
         const input = document.getElementById("memory-text");
@@ -571,6 +654,46 @@
           }
         } catch (err) {
           add("Could not reach the local Jarvis server.", "system");
+        }
+        await refreshStatus();
+      });
+
+      document.getElementById("mcp-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const nameInput = document.getElementById("mcp-name");
+        const commandInput = document.getElementById("mcp-command");
+        const argsInput = document.getElementById("mcp-args");
+        const name = nameInput.value.trim();
+        const command = commandInput.value.trim();
+        const args = argsInput.value.trim();
+        if (!name || !command) {
+          add("Give the MCP server a name and a command (for example: npx).", "system");
+          return;
+        }
+        const body = { name, command };
+        if (args) body.args = args;
+        try {
+          const { res, data } = await postJson("/api/mcp", body);
+          if (!res.ok) {
+            add(data.error || "Could not add that MCP server.", "system");
+          } else {
+            nameInput.value = "";
+            commandInput.value = "";
+            argsInput.value = "";
+            add(data.message || "Added MCP server.", "system");
+          }
+        } catch (err) {
+          add("Could not reach the local Jarvis server.", "system");
+        }
+        await refreshStatus();
+      });
+
+      document.getElementById("reload-mcp").addEventListener("click", async () => {
+        try {
+          const { data } = await postJson("/api/mcp/reload", {});
+          add(data.message || data.error || "Reloaded MCP servers.", "system");
+        } catch (err) {
+          add("Could not reload MCP servers.", "system");
         }
         await refreshStatus();
       });

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
 
+from src.assistant import attach_mcp, mcp_manager_of
 from src.auth.oauth import (
     OAuthError,
     begin_google_login,
@@ -38,7 +39,15 @@ from src.config import (
     list_llm_settings,
 )
 from src.llm import reset_failover_state
-from src.mcp.config import mcp_status_line
+from src.mcp.config import (
+    McpConfigError,
+    load_mcp_config,
+    mcp_payload,
+    mcp_status_line,
+    remove_mcp_server,
+    set_mcp_server_disabled,
+    upsert_mcp_server,
+)
 from src.memory.store import MemoryStore, memory_status_line
 
 DEFAULT_HOST = "127.0.0.1"
@@ -109,6 +118,8 @@ class JarvisWebApp:
             return _json(200, self._memory_payload())
         if verb == "GET" and route == "/api/due":
             return _json(200, {"due": self.take_due()})
+        if verb == "GET" and route == "/api/mcp":
+            return _json(200, self._mcp_payload())
         if verb == "POST" and route == "/api/chat":
             return self._chat(body)
         if verb == "POST" and route == "/api/key":
@@ -125,6 +136,16 @@ class JarvisWebApp:
             return self._set_automation_enabled(body, False)
         if verb == "POST" and route == "/api/automations/enable":
             return self._set_automation_enabled(body, True)
+        if verb == "POST" and route == "/api/mcp":
+            return self._upsert_mcp(body)
+        if verb == "POST" and route == "/api/mcp/remove":
+            return self._remove_mcp(body)
+        if verb == "POST" and route == "/api/mcp/disable":
+            return self._set_mcp_disabled(body, True)
+        if verb == "POST" and route == "/api/mcp/enable":
+            return self._set_mcp_disabled(body, False)
+        if verb == "POST" and route == "/api/mcp/reload":
+            return self._reload_mcp()
         if verb == "POST" and route == "/api/auth/google/connect":
             return self._connect_google()
         if verb == "POST" and route == "/api/auth/google/disconnect":
@@ -140,6 +161,7 @@ class JarvisWebApp:
             "/api/health",
             "/api/automations",
             "/api/memory",
+            "/api/mcp",
             "/api/due",
         }:
             return self.dispatch("GET", path, b"")
@@ -197,6 +219,7 @@ class JarvisWebApp:
             "auth": auth_status_line(self.auth_store),
             "google": self._google_status(),
             "mcp": mcp_status_line(),
+            "mcp_servers": self._mcp_payload()["servers"],
             "bind": "localhost only — not exposed on your LAN",
             "can_install_key": self._accepts_key_install(),
             "scheduler": self._scheduler_status(),
@@ -248,7 +271,7 @@ class JarvisWebApp:
             return None
         return _json(
             403,
-            {"error": "Memory and automations can only be edited on localhost."},
+            {"error": "Memory, automations, and MCP can only be edited on localhost."},
         )
 
     def _remember_fact(self, body: bytes) -> UiResponse:
@@ -386,6 +409,134 @@ class JarvisWebApp:
                 "message": f"{action}:\n" + "\n".join(job.summary_line() for job in changed),
             }
         )
+        return _json(200, data)
+
+    def _mcp_payload(self) -> dict:
+        return mcp_payload(load_mcp_config(), mcp_manager_of(self.orchestrator))
+
+    def _reconnect_mcp_locked(self) -> None:
+        if self.orchestrator is None:
+            return
+        attach_mcp(self.orchestrator)
+
+    def _upsert_mcp(self, body: bytes) -> UiResponse:
+        blocked = self._refuse_remote_writes()
+        if blocked is not None:
+            return blocked
+        payload, error = _json_object(
+            body,
+            'Send JSON like {"name": "filesystem", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]}.',
+        )
+        if error is not None:
+            return error
+        name = payload.get("name") or payload.get("id") or ""
+        command = payload.get("command") or ""
+        args = payload.get("args") if "args" in payload else None
+        env = payload.get("env") if "env" in payload else None
+        cwd = payload.get("cwd") if "cwd" in payload else None
+        disabled = payload.get("disabled")
+        try:
+            with self._lock:
+                config, spec, created = upsert_mcp_server(
+                    str(name),
+                    str(command),
+                    args=args,
+                    env=env,
+                    cwd=cwd,
+                    disabled=None if disabled is None else bool(disabled),
+                )
+                self._reconnect_mcp_locked()
+        except McpConfigError as exc:
+            return _json(400, {"error": str(exc)})
+        data = self._mcp_payload()
+        verb = "Added" if created else "Updated"
+        data.update(
+            {
+                "ok": True,
+                "server": spec.public_dict(),
+                "message": (
+                    f"{verb} MCP server '{spec.name}'. "
+                    "No extra AI key — Jarvis will spawn it as a local process."
+                ),
+            }
+        )
+        return _json(200, data)
+
+    def _remove_mcp(self, body: bytes) -> UiResponse:
+        blocked = self._refuse_remote_writes()
+        if blocked is not None:
+            return blocked
+        payload, error = _json_object(body, 'Send JSON like {"name": "filesystem"}.')
+        if error is not None:
+            return error
+        name = str(payload.get("name") or payload.get("id") or "").strip()
+        if not name:
+            return _json(400, {"error": "Say which MCP server to remove (name)."})
+        with self._lock:
+            _config, removed = remove_mcp_server(name)
+            if removed is None:
+                data = self._mcp_payload()
+                data.update({"ok": False, "error": f"No MCP server named '{name}'."})
+                return _json(404, data)
+            self._reconnect_mcp_locked()
+        data = self._mcp_payload()
+        data.update(
+            {
+                "ok": True,
+                "removed": removed.public_dict(),
+                "message": f"Removed MCP server '{removed.name}'.",
+            }
+        )
+        return _json(200, data)
+
+    def _set_mcp_disabled(self, body: bytes, disabled: bool) -> UiResponse:
+        blocked = self._refuse_remote_writes()
+        if blocked is not None:
+            return blocked
+        payload, error = _json_object(body, 'Send JSON like {"name": "filesystem"}.')
+        if error is not None:
+            return error
+        name = str(payload.get("name") or payload.get("id") or "").strip()
+        if not name:
+            verb = "disable" if disabled else "enable"
+            return _json(400, {"error": f"Say which MCP server to {verb} (name)."})
+        with self._lock:
+            _config, spec = set_mcp_server_disabled(name, disabled)
+            if spec is None:
+                data = self._mcp_payload()
+                data.update({"ok": False, "error": f"No MCP server named '{name}'."})
+                return _json(404, data)
+            self._reconnect_mcp_locked()
+        data = self._mcp_payload()
+        action = "Disabled" if disabled else "Enabled"
+        data.update(
+            {
+                "ok": True,
+                "server": spec.public_dict(),
+                "message": f"{action} MCP server '{spec.name}'.",
+            }
+        )
+        return _json(200, data)
+
+    def _reload_mcp(self) -> UiResponse:
+        blocked = self._refuse_remote_writes()
+        if blocked is not None:
+            return blocked
+        with self._lock:
+            self._reconnect_mcp_locked()
+        data = self._mcp_payload()
+        connected = sum(1 for row in data["servers"] if row.get("connected"))
+        if self.orchestrator is not None:
+            message = (
+                f"Reloaded MCP servers ({connected} connected). "
+                "No extra AI key — they are local processes from mcp.json."
+            )
+        else:
+            message = (
+                "Saved MCP config will connect after you paste an AI key "
+                "or restart with a key."
+            )
+        data.update({"ok": True, "message": message})
         return _json(200, data)
 
     def _scheduler_status(self) -> dict:
@@ -673,7 +824,7 @@ def serve(
         print(f"Same key as the REPL · {settings.summary()}", flush=True)
     print(
         "Connect Google from this page (OAuth, not a second AI key). "
-        "Remember facts and schedule automations in the sidebar — no extra API key. "
+        "Remember facts, schedule automations, and connect MCP servers in the sidebar — no extra API key. "
         "Reminders fire in the background while this UI is open "
         f"(every {int(app.tick_seconds)}s) — no extra cron. "
         "Only localhost can connect. Ctrl+C to stop.",

@@ -5,9 +5,20 @@ from pathlib import Path
 
 import pytest
 
-from src.assistant import build_orchestrator
+from src.assistant import attach_mcp, build_orchestrator
 from src.config import LLMSettings, describe_runtime
-from src.mcp.config import load_mcp_config, mcp_status_line
+from src.mcp.config import (
+    McpConfigError,
+    load_mcp_config,
+    mcp_payload,
+    mcp_status_line,
+    parse_mcp_args,
+    parse_mcp_env,
+    remove_mcp_server,
+    set_mcp_server_disabled,
+    upsert_mcp_server,
+    writable_mcp_config_path,
+)
 from src.mcp.manager import McpManager
 from src.mcp.protocol import MessageReader, encode_message
 from src.mcp.session import McpError, McpSession
@@ -171,3 +182,84 @@ def test_format_call_result_marks_errors():
     )
     assert text.startswith("MCP tool error:")
     assert "nope" in text
+
+
+def test_writable_path_uses_explicit_env(tmp_path, monkeypatch):
+    path = tmp_path / "custom-mcp.json"
+    monkeypatch.setenv("JARVIS_MCP_CONFIG", str(path))
+    assert writable_mcp_config_path() == path
+
+
+def test_upsert_save_remove_and_disable_roundtrip(tmp_path, monkeypatch):
+    path = tmp_path / "mcp.json"
+    monkeypatch.setenv("JARVIS_MCP_CONFIG", str(path))
+    config, spec, created = upsert_mcp_server(
+        "filesystem",
+        "npx",
+        args="-y @modelcontextprotocol/server-filesystem /tmp",
+        env={"TOKEN": "secret-value"},
+    )
+    assert created is True
+    assert spec.name == "filesystem"
+    assert spec.args[-1] == "/tmp"
+    assert spec.env["TOKEN"] == "secret-value"
+    assert path.is_file()
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert raw["mcpServers"]["filesystem"]["env"]["TOKEN"] == "secret-value"
+    public = spec.public_dict()
+    assert public["env_keys"] == ["TOKEN"]
+    assert "secret-value" not in json.dumps(public)
+    payload = mcp_payload(config)
+    assert payload["servers"][0]["env_keys"] == ["TOKEN"]
+    assert "secret-value" not in json.dumps(payload)
+
+    config, spec, created = upsert_mcp_server(
+        "filesystem",
+        "npx",
+        args=["-y", "@modelcontextprotocol/server-filesystem", "/home"],
+    )
+    assert created is False
+    assert spec.args[-1] == "/home"
+    assert spec.env["TOKEN"] == "secret-value"
+
+    config, spec = set_mcp_server_disabled("filesystem", True)
+    assert spec is not None and spec.disabled is True
+    assert load_mcp_config(path).enabled_servers == ()
+
+    config, removed = remove_mcp_server("filesystem")
+    assert removed is not None
+    assert config.servers == ()
+    assert load_mcp_config(path).servers == ()
+
+
+def test_parse_mcp_args_and_env():
+    assert parse_mcp_args('-y server "/tmp/My Files"') == ("-y", "server", "/tmp/My Files")
+    assert parse_mcp_args('["-y", "server"]') == ("-y", "server")
+    assert parse_mcp_env("FOO=bar\n# skip\nBAZ=qux") == {"FOO": "bar", "BAZ": "qux"}
+    try:
+        parse_mcp_env({"bad name": "x"})
+        assert False, "expected invalid env name to fail"
+    except McpConfigError:
+        pass
+
+
+def test_attach_mcp_reloads_live_orchestrator(monkeypatch, tmp_path):
+    path = tmp_path / "mcp.json"
+    monkeypatch.setenv("JARVIS_MCP_CONFIG", str(path))
+    settings = LLMSettings(provider="openai", api_key="test", model="gpt-4o-mini")
+    orchestrator = build_orchestrator(settings)
+    try:
+        names = {agent.name for agent in orchestrator.agents}
+        assert "MCP Agent" not in names
+        upsert_mcp_server(
+            "fake",
+            sys.executable,
+            args=[str(FAKE_SERVER)],
+        )
+        attach_mcp(orchestrator)
+        names = {agent.name for agent in orchestrator.agents}
+        assert "MCP Agent" in names
+        mcp_agent = next(agent for agent in orchestrator.agents if agent.name == "MCP Agent")
+        assert {tool.name() for tool in mcp_agent.tools} == {"echo", "add"}
+    finally:
+        orchestrator.close()
