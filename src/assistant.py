@@ -94,11 +94,13 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
     mail_agent = Agent(
         Name="Mail Agent",
         Description=(
-            "Reads Gmail (inbox, unread, search) after Google is connected "
-            "with `python main.py --connect google` or Connect Google in the "
+            "Reads Gmail (inbox, unread, search, and the full body of a "
+            "specific message) after Google is connected with "
+            "`python main.py --connect google` or Connect Google in the "
             "localhost web UI. Use when the user asks about email, inbox, "
-            "unread mail, or a message from someone. OAuth login — not a "
-            "second AI key. If Google is not connected, tell them to connect."
+            "unread mail, or wants to read a message from someone. OAuth "
+            "login — not a second AI key. If Google is not connected, tell "
+            "them to connect."
         ),
         Tools=[MailTool(auth)],
         Model=model,
@@ -107,11 +109,13 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
     calendar_agent = Agent(
         Name="Calendar Agent",
         Description=(
-            "Reads upcoming Google Calendar events after Google is connected "
-            "with `python main.py --connect google` or Connect Google in the "
+            "Reads Google Calendar after Google is connected with "
+            "`python main.py --connect google` or Connect Google in the "
             "localhost web UI. Use when the user asks what's on the calendar, "
-            "upcoming meetings, or today's agenda. OAuth login — not a second "
-            "AI key. If Google is not connected, tell them to connect."
+            "upcoming meetings, today's or tomorrow's agenda, or this week. "
+            "Today is the local-day agenda, not an unbounded upcoming list. "
+            "OAuth login — not a second AI key. If Google is not connected, "
+            "tell them to connect."
         ),
         Tools=[CalendarTool(auth)],
         Model=model,

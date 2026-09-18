@@ -7,7 +7,14 @@ from unittest.mock import Mock
 import pytest
 import requests
 
-from src.auth.google import list_events, list_mail
+from src.auth.google import (
+    calendar_bounds,
+    canonical_calendar_window,
+    get_mail,
+    list_events,
+    list_mail,
+    looks_like_gmail_id,
+)
 from src.auth.oauth import (
     OAuthError,
     begin_google_login,
@@ -234,6 +241,8 @@ def test_list_mail_formats_messages(tmp_path):
     assert "Lunch" in text
     assert "Ada" in text
     assert "See you at 3." in text
+    assert "[m1]" in text
+    assert "read <id>" in text
 
 
 def test_list_mail_retries_after_401(tmp_path, monkeypatch):
@@ -288,6 +297,7 @@ def test_list_events_formats_calendar(tmp_path):
     assert "Zoom" in text
     assert "Away" in text
     assert "all day" in text
+    assert "upcoming" in text.lower()
 
 
 def test_mail_and_calendar_tools(tmp_path):
@@ -305,6 +315,166 @@ def test_mail_and_calendar_tools(tmp_path):
     assert "No upcoming events" in CalendarTool(store, http=http).use(
         {"action": "search", "query": "standup"}
     )
+
+
+def _b64(text: str) -> str:
+    import base64
+
+    return base64.urlsafe_b64encode(text.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def test_calendar_windows_use_local_day_bounds(tmp_path):
+    store = AuthStore(tmp_path / "auth.json")
+    store.put(future_account())
+    http = Mock()
+    http.headers = {}
+    http.get.return_value = json_response({"items": []})
+    eastern = timezone(timedelta(hours=-5))
+    now = datetime(2026, 9, 18, 15, 30, tzinfo=eastern)
+
+    text = list_events(store, window="today", http=http, now=now)
+    params = dict(http.get.call_args.kwargs["params"])
+    assert params["timeMin"] == "2026-09-18T05:00:00Z"
+    assert params["timeMax"] == "2026-09-19T05:00:00Z"
+    assert "q" not in params
+    assert "today" in text.lower()
+
+    list_events(store, query="today", http=http, now=now)
+    params = dict(http.get.call_args.kwargs["params"])
+    assert "q" not in params
+    assert params["timeMax"] == "2026-09-19T05:00:00Z"
+
+    list_events(store, window="tomorrow", http=http, now=now)
+    params = dict(http.get.call_args.kwargs["params"])
+    assert params["timeMin"] == "2026-09-19T05:00:00Z"
+    assert params["timeMax"] == "2026-09-20T05:00:00Z"
+
+    list_events(store, window="week", http=http, now=now)
+    params = dict(http.get.call_args.kwargs["params"])
+    assert params["timeMin"] == "2026-09-18T05:00:00Z"
+    assert params["timeMax"] == "2026-09-21T05:00:00Z"
+
+    list_events(store, http=http, now=now)
+    params = dict(http.get.call_args.kwargs["params"])
+    assert params["timeMin"] == "2026-09-18T20:30:00Z"
+    assert "timeMax" not in params
+
+
+def test_calendar_tool_today_is_a_window_not_a_search(tmp_path):
+    store = AuthStore(tmp_path / "auth.json")
+    store.put(future_account())
+    http = Mock()
+    http.headers = {}
+    http.get.return_value = json_response({"items": []})
+    text = CalendarTool(store, http=http).use("today")
+    params = dict(http.get.call_args.kwargs["params"])
+    assert "timeMax" in params
+    assert "q" not in params
+    assert "today" in text.lower()
+    CalendarTool(store, http=http).use("this week")
+    params = dict(http.get.call_args.kwargs["params"])
+    assert "timeMax" in params
+    assert "q" not in params
+
+
+def test_calendar_bounds_helpers():
+    now = datetime(2026, 9, 18, 12, 0, tzinfo=timezone.utc)
+    start, end, label = calendar_bounds("today", now)
+    assert label == "today"
+    assert end == start + timedelta(days=1)
+    assert canonical_calendar_window("this week") == "week"
+    assert canonical_calendar_window("standup") is None
+    assert looks_like_gmail_id("18c1abcd")
+    assert not looks_like_gmail_id("inbox")
+    assert not looks_like_gmail_id("meeting")
+
+
+def test_get_mail_reads_plain_body(tmp_path):
+    store = AuthStore(tmp_path / "auth.json")
+    store.put(future_account())
+    http = Mock()
+    http.headers = {}
+
+    def get(url, params=None, headers=None, timeout=None):
+        if url.endswith("/messages") and "gmail" in url:
+            return json_response({"messages": [{"id": "aabbccdd"}]})
+        return json_response(
+            {
+                "id": "aabbccdd",
+                "snippet": "See you at 3.",
+                "payload": {
+                    "mimeType": "multipart/alternative",
+                    "headers": [
+                        {"name": "Subject", "value": "Lunch"},
+                        {"name": "From", "value": "Ada <ada@example.com>"},
+                        {"name": "Date", "value": "Fri, 18 Sep 2026 12:00:00 +0000"},
+                    ],
+                    "parts": [
+                        {
+                            "mimeType": "text/plain",
+                            "body": {"data": _b64("Bring the notes.\nSee you at 3.")},
+                        },
+                        {
+                            "mimeType": "text/html",
+                            "body": {"data": _b64("<b>HTML should lose</b>")},
+                        },
+                    ],
+                },
+            }
+        )
+
+    http.get.side_effect = get
+    text = get_mail(store, "from:ada", http=http)
+    assert "Bring the notes." in text
+    assert "See you at 3." in text
+    assert "HTML should lose" not in text
+    assert "[aabbccdd]" in text
+    assert "Lunch" in text
+
+
+def test_get_mail_falls_back_to_html(tmp_path):
+    store = AuthStore(tmp_path / "auth.json")
+    store.put(future_account())
+    http = Mock()
+    http.headers = {}
+    http.get.return_value = json_response(
+        {
+            "id": "ffeeddcc",
+            "snippet": "fallback",
+            "payload": {
+                "mimeType": "text/html",
+                "headers": [
+                    {"name": "Subject", "value": "Hello"},
+                    {"name": "From", "value": "Bob"},
+                ],
+                "body": {"data": _b64("<p>Hi there</p><script>alert(1)</script>")},
+            },
+        }
+    )
+    text = get_mail(store, "ffeeddcc", http=http)
+    assert "Hi there" in text
+    assert "alert(1)" not in text
+    assert "Hello" in text
+
+
+def test_mail_tool_read_action(tmp_path):
+    store = AuthStore(tmp_path / "auth.json")
+    store.put(future_account())
+    http = Mock()
+    http.headers = {}
+    http.get.return_value = json_response(
+        {
+            "id": "aabbcc",
+            "payload": {
+                "headers": [{"name": "Subject", "value": "Ping"}],
+                "body": {"data": _b64("Full body here.")},
+                "mimeType": "text/plain",
+            },
+        }
+    )
+    text = MailTool(store, http=http).use({"action": "read", "id": "aabbcc"})
+    assert "Full body here." in text
+    assert "Ping" in text
 
 
 def test_local_callback_captures_code():

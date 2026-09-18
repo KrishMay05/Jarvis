@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.auth.google import list_events
+from src.auth.google import canonical_calendar_window, list_events
 from src.auth.store import AuthStore
 from src.tools.base_tool import Tool
 
@@ -12,6 +12,8 @@ _LIST = frozenset(
         "upcoming",
         "events",
         "today",
+        "tomorrow",
+        "week",
         "calendar",
         "agenda",
         "show",
@@ -36,10 +38,11 @@ class CalendarTool(Tool):
 
     def description(self) -> str:
         return (
-            "Read upcoming Google Calendar events (readonly) after the user "
-            "connects Google with `python main.py --connect google` or Connect "
-            "Google in the web UI. OAuth — not a second AI key. Args: upcoming; "
-            "today; search standup."
+            "Read Google Calendar events (readonly) after the user connects "
+            "Google with `python main.py --connect google` or Connect Google "
+            "in the web UI. OAuth — not a second AI key. Args: upcoming; "
+            "today; tomorrow; week; search standup. 'today' is the local-day "
+            "agenda (not an unbounded upcoming list)."
         )
 
     def use(self, args) -> str:
@@ -51,13 +54,28 @@ class CalendarTool(Tool):
             or payload
             or ""
         ).strip()
-        if action == "today" and not query:
+        window = canonical_calendar_window(
+            extra.get("window") or extra.get("range") or extra.get("when") or extra.get("day")
+        )
+        if window is None:
+            window = canonical_calendar_window(action)
+        if window is None:
+            window = canonical_calendar_window(query)
+            if window is not None:
+                query = ""
+        elif canonical_calendar_window(query) == window:
             query = ""
         try:
             limit = int(extra.get("limit") or extra.get("max") or 8)
         except (TypeError, ValueError):
             limit = 8
-        return list_events(self.store, query, limit=limit, http=self.http)
+        return list_events(
+            self.store,
+            query,
+            limit=limit,
+            http=self.http,
+            window=window,
+        )
 
 
 def _parse_args(args) -> tuple[str, str, dict]:
@@ -78,6 +96,7 @@ def _parse_args(args) -> tuple[str, str, dict]:
             or extra.get("text")
             or extra.get("input")
             or extra.get("args")
+            or extra.get("window")
             or ""
         )
         payload_text = str(payload).strip()
@@ -92,6 +111,9 @@ def _parse_args(args) -> tuple[str, str, dict]:
 def _split_command(text: str) -> tuple[str, str]:
     if not text:
         return "upcoming", ""
+    folded = " ".join(text.lower().split())
+    if canonical_calendar_window(folded):
+        return folded, ""
     first, _, rest = text.partition(" ")
     verb = first.strip().lower().rstrip(":")
     if verb in _LIST | _SEARCH:

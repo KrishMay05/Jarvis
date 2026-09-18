@@ -307,7 +307,7 @@
         <section class="chat">
           <div id="log"></div>
           <form id="composer">
-            <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox, MCP tools"></textarea>
+            <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox, today's calendar, MCP tools"></textarea>
             <button id="send" type="submit">Send</button>
           </form>
           <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. Remember facts, schedule automations, and connect MCP servers here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
@@ -400,7 +400,7 @@
         });
         if (!log.childElementCount) {
           if (ready) {
-            add("At your service. Weather, research, memory, automations, computer use, mail, calendar, and MCP — one AI key. Remember facts, schedule reminders, and connect MCP servers in the sidebar without chatting. Reminders fire here while the page is open. Connect Google in the sidebar when you want inbox and calendar.", "jarvis");
+            add("At your service. Weather, research, memory, automations, computer use, mail, calendar, and MCP — one AI key. Remember facts, schedule reminders, and connect MCP servers in the sidebar without chatting. Reminders fire here while the page is open. Connect Google in the sidebar when you want inbox, full email bodies, and today's calendar.", "jarvis");
           } else {
             add(data.error || "Paste one AI API key in the sidebar. No .env edit and no restart.", "system");
             add("You can still remember facts, schedule reminders, connect MCP servers, and connect Google without an AI key.", "system");
