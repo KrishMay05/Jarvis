@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.auth.google import list_mail
+from src.auth.google import get_mail, list_mail, looks_like_gmail_id
 from src.auth.store import AuthStore
 from src.tools.base_tool import Tool
 
@@ -10,6 +10,7 @@ _LIST = frozenset(
     {"list", "inbox", "mail", "recent", "unread", "show", "ls", "status"}
 )
 _SEARCH = frozenset({"search", "find", "query", "from", "about"})
+_READ = frozenset({"read", "open", "get", "body", "message"})
 
 
 class MailTool(Tool):
@@ -25,9 +26,11 @@ class MailTool(Tool):
 
     def description(self) -> str:
         return (
-            "Read recent Gmail (readonly) after the user connects Google with "
+            "Read Gmail (readonly) after the user connects Google with "
             "`python main.py --connect google` or Connect Google in the web UI. "
-            "OAuth — not a second AI key. Args: inbox; unread; search from:ada; list."
+            "OAuth — not a second AI key. Args: inbox; unread; search from:ada; "
+            "read from:ada; read <id>. Inbox listings include message ids so "
+            "you can open the full body with read."
         )
 
     def use(self, args) -> str:
@@ -36,9 +39,14 @@ class MailTool(Tool):
             extra.get("q")
             or extra.get("query")
             or extra.get("search")
+            or extra.get("id")
+            or extra.get("message_id")
+            or extra.get("messageId")
             or payload
             or ""
         ).strip()
+        if action in _READ or looks_like_gmail_id(query):
+            return get_mail(self.store, query, http=self.http)
         if action in _SEARCH:
             query = query or "in:inbox"
         elif action == "unread":
@@ -66,7 +74,10 @@ def _parse_args(args) -> tuple[str, str, dict]:
             or ""
         ).strip().lower()
         payload = (
-            extra.get("query")
+            extra.get("id")
+            or extra.get("message_id")
+            or extra.get("messageId")
+            or extra.get("query")
             or extra.get("q")
             or extra.get("search")
             or extra.get("text")
@@ -88,6 +99,6 @@ def _split_command(text: str) -> tuple[str, str]:
         return "inbox", ""
     first, _, rest = text.partition(" ")
     verb = first.strip().lower().rstrip(":")
-    if verb in _LIST | _SEARCH:
+    if verb in _LIST | _SEARCH | _READ:
         return verb, rest.strip()
     return "search", text

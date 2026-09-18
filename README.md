@@ -81,8 +81,8 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Memory | Local `~/.jarvis/memory.json` — remember facts across sessions; inspect or forget them in the web UI (no extra key) |
 | Automations | Local `~/.jarvis/automations.json` — reminders and recurring prompts; `--serve` fires them in the background and the sidebar can add/pause/cancel jobs (no extra key) |
 | Computer use | Open public http(s) pages, read the text, follow on-page links (no extra key) |
-| Mail | Gmail inbox/search after Connect Google in the web UI or `python main.py --connect google` (OAuth, not an AI key) |
-| Calendar | Upcoming Google Calendar events after the same Google login |
+| Mail | Gmail inbox/search and full message bodies after Connect Google in the web UI or `python main.py --connect google` (OAuth, not an AI key) |
+| Calendar | Today's / tomorrow's / this week's Google Calendar agenda after the same Google login |
 | MCP tools | Local stdio servers from `mcp.json` or the localhost UI MCP editor (no extra AI key) |
 | Web UI | `python main.py --serve` on 127.0.0.1 (paste the AI key in the sidebar or use `.env`; Connect Google there too) |
 
@@ -187,9 +187,12 @@ python main.py --connect google
 
 Jarvis starts a localhost callback, opens the Google consent screen, and stores tokens in `~/.jarvis/auth.json` (mode 0600). Scopes are **readonly** mail and calendar plus email identity.
 
+Inbox listings include message ids. Ask Jarvis to **read** one (or `from:ada`) to open the full body, not just the snippet. **Today**, **tomorrow**, and **this week** are local-day calendar windows — “what's on my calendar today?” is today's agenda, not every upcoming event.
+
 ```bash
 python main.py --auth
 python main.py --once "What's in my inbox?"
+python main.py --once "Read the latest email from Ada"
 python main.py --once "What's on my calendar today?"
 python main.py --disconnect google
 ```
@@ -263,5 +266,6 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 13. ~~Background automation ticker in `--serve`~~ (due reminders appear in the UI without cron or another chat)
 14. ~~Memory and automation editors in the localhost UI~~ (list/add/forget facts and schedule/pause/cancel jobs without chatting)
 15. ~~MCP editor in the localhost UI~~ (add/disable/remove/reload stdio servers without editing `mcp.json` by hand)
-16. Desktop / JS-capable computer use (Playwright or screenshot+input)
-17. Microsoft / Outlook OAuth using the same auth store
+16. ~~Read full Gmail bodies and calendar today/tomorrow/week windows~~ (same Google OAuth; still readonly)
+17. Desktop / JS-capable computer use (Playwright or screenshot+input)
+18. Microsoft / Outlook OAuth using the same auth store
