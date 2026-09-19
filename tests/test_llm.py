@@ -3,7 +3,15 @@ from unittest.mock import Mock
 import pytest
 
 from src.config import LLMSettings
-from src.llm import _query_anthropic, _query_gemini, _query_openai, query_llm, reset_failover_state
+from src.llm import (
+    _query_anthropic,
+    _query_gemini,
+    _query_openai,
+    _stream_openai,
+    query_llm,
+    reset_failover_state,
+    stream_llm,
+)
 
 
 def test_query_llm_dispatches_to_openai(monkeypatch):
@@ -228,3 +236,75 @@ def test_query_llm_single_key_still_raises_original_error(monkeypatch):
     monkeypatch.setattr("src.llm._query_openai", boom)
     with pytest.raises(RuntimeError, match="invalid api key"):
         query_llm("ping")
+
+
+def test_stream_llm_yields_openai_chunks(monkeypatch):
+    monkeypatch.setattr(
+        "src.llm.get_llm_settings",
+        lambda: LLMSettings(provider="openai", api_key="sk-test", model="gpt-4o-mini"),
+    )
+    monkeypatch.setattr(
+        "src.llm._stream_openai",
+        lambda settings, prompt, model: iter(["Hel", "lo ", prompt]),
+    )
+    assert "".join(stream_llm("ping")) == "Hello ping"
+
+
+def test_stream_llm_fails_over_before_any_chunk(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-dead")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-backup")
+    calls: list[str] = []
+
+    def boom(settings, prompt, model):
+        calls.append("gemini")
+        raise RuntimeError("429 rate limited")
+        yield  # pragma: no cover
+
+    def ok(settings, prompt, model):
+        calls.append("openai")
+        yield "recovered"
+
+    monkeypatch.setattr("src.llm._stream_gemini", boom)
+    monkeypatch.setattr("src.llm._stream_openai", ok)
+    assert "".join(stream_llm("ping")) == "recovered"
+    assert calls == ["gemini", "openai"]
+
+
+def test_stream_llm_does_not_failover_after_tokens_start(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-flaky")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-backup")
+    openai_calls = {"n": 0}
+
+    def partial(settings, prompt, model):
+        yield "Hi"
+        raise RuntimeError("connection reset")
+
+    def ok(settings, prompt, model):
+        openai_calls["n"] += 1
+        yield "should-not-run"
+
+    monkeypatch.setattr("src.llm._stream_gemini", partial)
+    monkeypatch.setattr("src.llm._stream_openai", ok)
+    chunks: list[str] = []
+    with pytest.raises(RuntimeError, match="connection reset"):
+        for chunk in stream_llm("ping"):
+            chunks.append(chunk)
+    assert chunks == ["Hi"]
+    assert openai_calls["n"] == 0
+
+
+def test_stream_openai_reads_delta_content(monkeypatch):
+    first = Mock()
+    first.choices = [Mock(delta=Mock(content="Hel"), message=None)]
+    second = Mock()
+    second.choices = [Mock(delta=Mock(content="lo"), message=None)]
+    client = Mock()
+    client.chat.completions.create.return_value = [first, second]
+    openai_mod = Mock()
+    openai_mod.OpenAI.return_value = client
+    import sys
+
+    monkeypatch.setitem(sys.modules, "openai", openai_mod)
+    settings = LLMSettings(provider="openai", api_key="sk-test", model="gpt-4o-mini")
+    assert "".join(_stream_openai(settings, "ping", "gpt-4o-mini")) == "Hello"
+    assert client.chat.completions.create.call_args.kwargs["stream"] is True

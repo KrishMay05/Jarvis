@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from src.json_util import parse_llm_json
-from src.llm import query_llm
+from src.llm import query_llm, stream_llm
 from src.tools.base_tool import Tool
 
 
@@ -32,7 +32,7 @@ class Agent:
         self.memory.append(f"User: {user_input}")
 
         if not self.tools:
-            return self._reply_without_tools(user_input)
+            return self._reply_without_tools()
 
         context = "\n".join(self.memory)
         durable = self._durable_context()
@@ -78,11 +78,32 @@ class Agent:
 
         return response_dict
 
-    def _reply_without_tools(self, user_input: str):
+    def iter_plain_reply(self, user_input: str):
+        """Yield chat tokens for the localhost UI. Same prompt as process_input."""
+        self.memory = self.memory[-self.max_memory :]
+        self.memory.append(f"User: {user_input}")
+        parts: list[str] = []
+        for chunk in stream_llm(self._chat_prompt(), model=self.model):
+            text = str(chunk or "")
+            if not text:
+                continue
+            parts.append(text)
+            yield text
+        reply = "".join(parts).strip() or "I'm here. How can I help?"
+        self.memory.append(f"Agent: {reply}")
+
+    def _reply_without_tools(self):
         """General chat: skip the tool JSON protocol and answer in plain text."""
+        reply = query_llm(self._chat_prompt(), model=self.model).strip() or (
+            "I'm here. How can I help?"
+        )
+        self.memory.append(f"Agent: {reply}")
+        return {"action": "respond_to_user", "args": reply}
+
+    def _chat_prompt(self) -> str:
         context = "\n".join(self.memory)
         durable = self._durable_context()
-        prompt = f"""You are {self.name}: {self.description}
+        return f"""You are {self.name}: {self.description}
 
 Conversation:
 {context}
@@ -93,11 +114,6 @@ Answer the user's latest message directly. Do not use JSON.
 If the message is a greeting, greet them back and offer to help.
 Use durable memories when they are relevant (name, city, preferences).
 """
-        reply = query_llm(prompt, model=self.model).strip() or (
-            "I'm here. How can I help?"
-        )
-        self.memory.append(f"Agent: {reply}")
-        return {"action": "respond_to_user", "args": reply}
 
     def _durable_context(self) -> str:
         store = self.memory_store

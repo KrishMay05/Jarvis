@@ -10,6 +10,7 @@ import json
 import os
 import threading
 import webbrowser
+from collections.abc import Iterator
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -122,6 +123,15 @@ class JarvisWebApp:
             return _json(200, self._mcp_payload())
         if verb == "POST" and route == "/api/chat":
             return self._chat(body)
+        if verb == "POST" and route == "/api/chat/stream":
+            error, chunks = self.begin_chat_stream(body)
+            if error is not None:
+                return error
+            return UiResponse(
+                200,
+                b"".join(chunks),
+                "text/event-stream; charset=utf-8",
+            )
         if verb == "POST" and route == "/api/key":
             return self._install_key(body)
         if verb == "POST" and route == "/api/memory":
@@ -607,38 +617,97 @@ class JarvisWebApp:
         return run_due_jobs(self._automation_store(), run_prompt=None, now=now)
 
     def _chat(self, body: bytes) -> UiResponse:
+        error, message = self._parse_chat_message(body)
+        if error is not None:
+            return error
+
+        with self._lock:
+            due = self._note_user_and_take_due(message)
+            reply = self.orchestrator.handle_message(message)
+        return _json(200, {"reply": str(reply), "due": due})
+
+    def begin_chat_stream(
+        self, body: bytes
+    ) -> tuple[UiResponse | None, Iterator[bytes] | None]:
+        """Start an SSE chat. Errors return JSON; success yields event chunks."""
+        error, message = self._parse_chat_message(body)
+        if error is not None:
+            return error, None
+
+        def chunks() -> Iterator[bytes]:
+            with self._lock:
+                due = self._note_user_and_take_due(message)
+                if due:
+                    yield _sse({"type": "due", "items": due})
+                try:
+                    yield from self._orchestrator_sse(message)
+                except Exception:
+                    yield _sse(
+                        {
+                            "type": "error",
+                            "error": "Jarvis could not answer that.",
+                        }
+                    )
+
+        return None, chunks()
+
+    def _parse_chat_message(self, body: bytes) -> tuple[UiResponse | None, str]:
         if len(body) > MAX_BODY_BYTES:
-            return _json(413, {"error": "That message is too long."})
+            return _json(413, {"error": "That message is too long."}), ""
         if not self.ready:
-            return _json(
-                503,
-                {
-                    "error": self.missing_key
-                    or "Jarvis needs one AI API key before chat can start. "
-                    "Paste it on this page or add it to .env."
-                },
+            return (
+                _json(
+                    503,
+                    {
+                        "error": self.missing_key
+                        or "Jarvis needs one AI API key before chat can start. "
+                        "Paste it on this page or add it to .env."
+                    },
+                ),
+                "",
             )
         try:
             payload = json.loads(body.decode("utf-8") or "{}")
         except (UnicodeDecodeError, json.JSONDecodeError):
-            return _json(400, {"error": "Send JSON like {\"message\": \"...\"}."})
+            return _json(400, {"error": "Send JSON like {\"message\": \"...\"}."}), ""
         if not isinstance(payload, dict):
-            return _json(400, {"error": "Send a JSON object with a message field."})
+            return _json(400, {"error": "Send a JSON object with a message field."}), ""
         message = str(payload.get("message") or payload.get("prompt") or "").strip()
         if not message:
-            return _json(400, {"error": "Type a message first."})
+            return _json(400, {"error": "Type a message first."}), ""
+        return None, message
 
-        with self._lock:
-            newly = self._drain_due_locked()
-            if newly:
-                self._due_inbox.extend(newly)
-            due = list(self._due_inbox)
-            self._due_inbox.clear()
-            memory = getattr(self.orchestrator, "memory", None)
-            if isinstance(memory, list):
-                memory.append(f"User: {message}")
-            reply = self.orchestrator.handle_message(message)
-        return _json(200, {"reply": str(reply), "due": [str(item) for item in due]})
+    def _note_user_and_take_due(self, message: str) -> list[str]:
+        newly = self._drain_due_locked()
+        if newly:
+            self._due_inbox.extend(newly)
+        due = [str(item) for item in self._due_inbox]
+        self._due_inbox.clear()
+        memory = getattr(self.orchestrator, "memory", None)
+        if isinstance(memory, list):
+            memory.append(f"User: {message}")
+        return due
+
+    def _orchestrator_sse(self, message: str) -> Iterator[bytes]:
+        orch = self.orchestrator
+        streamer = getattr(orch, "handle_message_events", None)
+        saw_done = False
+        reply = ""
+        if callable(streamer):
+            for event in streamer(message):
+                public = _public_chat_event(event)
+                if public is None:
+                    continue
+                if public.get("type") == "done":
+                    saw_done = True
+                    reply = str(public.get("reply") or "")
+                yield _sse(public)
+        else:
+            reply = str(orch.handle_message(message))
+            if reply:
+                yield _sse({"type": "token", "text": reply})
+        if not saw_done:
+            yield _sse({"type": "done", "reply": reply})
 
     def _accepts_key_install(self) -> bool:
         host = urlparse(self.public_base or "").hostname or DEFAULT_HOST
@@ -827,6 +896,7 @@ def serve(
         "Remember facts, schedule automations, and connect MCP servers in the sidebar — no extra API key. "
         "Reminders fire in the background while this UI is open "
         f"(every {int(app.tick_seconds)}s) — no extra cron. "
+        "Chat replies stream live — no extra API key. "
         "Only localhost can connect. Ctrl+C to stop.",
         flush=True,
     )
@@ -932,6 +1002,39 @@ def _json(status: int, payload: dict) -> UiResponse:
     return UiResponse(status, raw)
 
 
+def _sse(event: dict) -> bytes:
+    payload = json.dumps(event, ensure_ascii=False)
+    return f"data: {payload}\n\n".encode("utf-8")
+
+
+def _public_chat_event(event) -> dict | None:
+    if not isinstance(event, dict):
+        return None
+    kind = str(event.get("type") or "").strip().lower()
+    if kind == "status":
+        text = str(event.get("text") or "").strip()
+        return {"type": "status", "text": text} if text else None
+    if kind == "step":
+        agent = str(event.get("agent") or "Agent").strip() or "Agent"
+        text = str(event.get("text") or "")
+        return {"type": "step", "agent": agent, "text": text}
+    if kind == "token":
+        return {"type": "token", "text": str(event.get("text") or "")}
+    if kind == "due":
+        items = event.get("items") or event.get("due") or []
+        if not isinstance(items, list):
+            items = [items]
+        return {"type": "due", "items": [str(item) for item in items]}
+    if kind == "done":
+        return {"type": "done", "reply": str(event.get("reply") or "")}
+    if kind == "error":
+        return {
+            "type": "error",
+            "error": str(event.get("error") or "Jarvis could not answer that."),
+        }
+    return None
+
+
 def _bound_handler(app: JarvisWebApp) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
@@ -961,6 +1064,16 @@ def _bound_handler(app: JarvisWebApp) -> type[BaseHTTPRequestHandler]:
                 self._write(_json(413, {"error": "That message is too long."}))
                 return
             body = self.rfile.read(length) if length else b""
+            route = urlparse(self.path or "/").path or "/"
+            if route != "/" and route.endswith("/"):
+                route = route.rstrip("/")
+            if self.command == "POST" and route == "/api/chat/stream":
+                error, chunks = app.begin_chat_stream(body)
+                if error is not None:
+                    self._write(error)
+                    return
+                self._write_sse(chunks)
+                return
             response = app.dispatch(self.command, self.path, body)
             self._write(response, send_body=self.command != "HEAD")
 
@@ -973,6 +1086,21 @@ def _bound_handler(app: JarvisWebApp) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             if send_body:
                 self.wfile.write(response.body)
+
+        def _write_sse(self, chunks: Iterator[bytes]) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            try:
+                for chunk in chunks:
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+            except BrokenPipeError:
+                return
 
         def log_message(self, format: str, *args) -> None:  # noqa: A003
             return
