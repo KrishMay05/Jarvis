@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 from src.agent import Agent
 from src.automation.runner import run_due_jobs
 from src.json_util import parse_llm_json
@@ -11,6 +13,8 @@ from src.logger import log_message
 _EMPTY_FOLLOWUPS = frozenset(
     {"", "none", "null", "n/a", "na", "respond_to_user", "-"}
 )
+_DEFAULT_REPLY = "I could not finish that request in the allowed number of steps."
+_STEP_SNIPPET = 600
 
 
 class AgentOrchestrator:
@@ -35,7 +39,8 @@ class AgentOrchestrator:
     def json_parser(self, input_string: str):
         return parse_llm_json(input_string)
 
-    def orchestrate_task(self, user_input: str):
+    def _plan_task(self, user_input: str) -> dict:
+        """Ask the LLM which agent should run next (blocking JSON call)."""
         self.memory = self.memory[-self.max_memory :]
         context = "\n".join(self.memory)
         durable = ""
@@ -86,16 +91,19 @@ class AgentOrchestrator:
         try:
             llm_response = self.json_parser(raw)
         except ValueError:
-            return {
+            llm_response = {
                 "action": "respond_to_user",
                 "input": raw.strip() or "I had trouble planning that request.",
             }
 
-        self.memory.append(f"Orchestrator: {llm_response}")
-
         if not isinstance(llm_response, dict):
-            return {"action": "respond_to_user", "input": str(llm_response)}
+            llm_response = {"action": "respond_to_user", "input": str(llm_response)}
 
+        self.memory.append(f"Orchestrator: {llm_response}")
+        return llm_response
+
+    def orchestrate_task(self, user_input: str):
+        llm_response = self._plan_task(user_input)
         action = llm_response.get("action", "")
         action_name = str(action).strip().lower()
         rewritten_input = llm_response.get("input", user_input)
@@ -130,7 +138,7 @@ class AgentOrchestrator:
         """
         pending = user_input
         observations: list[str] = []
-        reply = "I could not finish that request in the allowed number of steps."
+        reply = _DEFAULT_REPLY
         for _ in range(self.max_steps):
             response = self.orchestrate_task(pending)
             if not isinstance(response, dict):
@@ -157,11 +165,93 @@ class AgentOrchestrator:
             reply = str(response.get("input") or response)
             break
         else:
-            reply = "I could not finish that request in the allowed number of steps."
+            reply = _DEFAULT_REPLY
 
         if self.memory_store is not None:
             self.memory_store.record_exchange(user_input, reply)
         return reply
+
+    def handle_message_events(
+        self, user_input: str, *, stream_tokens: bool = True
+    ) -> Iterator[dict]:
+        """Yield UI events while producing the same reply as handle_message.
+
+        status/step events keep tool work visible. Chat Agent tokens stream
+        from the same AI key via stream_llm. Multi-step specialist replies
+        still arrive as one final token after observations.
+        """
+        pending = user_input
+        observations: list[str] = []
+        reply = _DEFAULT_REPLY
+        finished = False
+        for _ in range(self.max_steps):
+            yield {
+                "type": "status",
+                "text": "Planning…" if not observations else "Working…",
+            }
+            plan = self._plan_task(pending)
+            action = str(plan.get("action") or "").strip().lower()
+            rewritten_input = plan.get("input", pending)
+            if action == "respond_to_user":
+                reply = str(plan.get("input") or plan.get("args") or "")
+                if reply:
+                    yield {"type": "token", "text": reply}
+                finished = True
+                break
+
+            agent = next(
+                (item for item in self.agents if item.name.lower() == action),
+                None,
+            )
+            if agent is None:
+                reply = f"No agent named '{plan.get('action')}' is available."
+                yield {"type": "token", "text": reply}
+                finished = True
+                break
+
+            if stream_tokens and not agent.tools:
+                parts: list[str] = []
+                for chunk in agent.iter_plain_reply(str(rewritten_input)):
+                    parts.append(chunk)
+                    yield {"type": "token", "text": chunk}
+                text = "".join(parts).strip() or "I'm here. How can I help?"
+                self.memory.append(f"{agent.name} result: {text}")
+                if not _has_followup(plan):
+                    reply = text
+                    finished = True
+                    break
+                yield {
+                    "type": "step",
+                    "agent": agent.name,
+                    "text": _snippet(text),
+                }
+                observations.append(f"{agent.name}: {text}")
+                pending = _followup_prompt(user_input, observations)
+                continue
+
+            agent_response = agent.process_input(rewritten_input)
+            text, direct_reply = _result_text_and_direct(agent_response)
+            self.memory.append(f"{agent.name} result: {text}")
+            if direct_reply and not _has_followup(plan):
+                reply = text
+                if reply:
+                    yield {"type": "token", "text": reply}
+                finished = True
+                break
+            yield {
+                "type": "step",
+                "agent": agent.name,
+                "text": _snippet(text),
+            }
+            observations.append(f"{agent.name}: {text}")
+            pending = _followup_prompt(user_input, observations)
+        if not finished:
+            reply = _DEFAULT_REPLY
+            yield {"type": "token", "text": reply}
+
+        if self.memory_store is not None:
+            self.memory_store.record_exchange(user_input, reply)
+        yield {"type": "done", "reply": reply}
 
     def drain_due_automations(self, now=None) -> list[str]:
         """Fire due reminders and run-jobs. Safe to call between REPL turns."""
@@ -207,6 +297,24 @@ class AgentOrchestrator:
 def _has_followup(decision: dict) -> bool:
     nxt = str(decision.get("next_action") or "").strip().lower()
     return nxt not in _EMPTY_FOLLOWUPS
+
+
+def _followup_prompt(user_input: str, observations: list[str]) -> str:
+    return (
+        f"Original user request: {user_input}\n"
+        "Agent results so far:\n"
+        + "\n".join(observations)
+        + "\nIf another agent is needed, select it. "
+        "If the request is complete, respond_to_user with a helpful "
+        "final answer that uses the agent results."
+    )
+
+
+def _snippet(text: str) -> str:
+    value = str(text or "").strip()
+    if len(value) <= _STEP_SNIPPET:
+        return value
+    return value[:_STEP_SNIPPET].rstrip() + "…"
 
 
 def _result_text_and_direct(result) -> tuple[str, bool]:

@@ -20,7 +20,7 @@
         font-family: "Segoe UI", "Avenir Next", ui-sans-serif, system-ui, sans-serif;
       }
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); }
       body {
         background:
           radial-gradient(1200px 600px at 10% -10%, rgba(212, 175, 55, 0.12), transparent 50%),
@@ -30,7 +30,8 @@
       .shell {
         max-width: 1180px;
         margin: 0 auto;
-        min-height: 100%;
+        height: 100%;
+        min-height: 0;
         display: grid;
         grid-template-rows: auto 1fr;
         padding: 20px 20px 16px;
@@ -70,6 +71,7 @@
         grid-template-columns: 300px 1fr;
         gap: 16px;
         min-height: 0;
+        overflow: hidden;
       }
       aside, .chat {
         background: linear-gradient(180deg, var(--panel), var(--panel-2));
@@ -139,6 +141,13 @@
         border: 1px solid rgba(255, 255, 255, 0.08);
       }
       .msg.system { align-self: stretch; max-width: none; color: var(--muted); font-size: 0.86rem; }
+      .msg.jarvis.live::after {
+        content: "▍";
+        margin-left: 2px;
+        color: var(--gold);
+        animation: caret 1s step-end infinite;
+      }
+      @keyframes caret { 50% { opacity: 0; } }
       .msg.due {
         align-self: stretch;
         max-width: none;
@@ -310,7 +319,7 @@
             <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox, today's calendar, MCP tools"></textarea>
             <button id="send" type="submit">Send</button>
           </form>
-          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. Remember facts, schedule automations, and connect MCP servers here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
+          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. Replies stream as Jarvis works (tool steps, then the answer). Remember facts, schedule automations, and connect MCP servers here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
         </section>
       </div>
     </div>
@@ -400,7 +409,7 @@
         });
         if (!log.childElementCount) {
           if (ready) {
-            add("At your service. Weather, research, memory, automations, computer use, mail, calendar, and MCP — one AI key. Remember facts, schedule reminders, and connect MCP servers in the sidebar without chatting. Reminders fire here while the page is open. Connect Google in the sidebar when you want inbox, full email bodies, and today's calendar.", "jarvis");
+            add("At your service. Weather, research, memory, automations, computer use, mail, calendar, and MCP — one AI key. Replies stream here as I work. Remember facts, schedule reminders, and connect MCP servers in the sidebar without chatting. Reminders fire here while the page is open. Connect Google in the sidebar when you want inbox, full email bodies, and today's calendar.", "jarvis");
           } else {
             add(data.error || "Paste one AI API key in the sidebar. No .env edit and no restart.", "system");
             add("You can still remember facts, schedule reminders, connect MCP servers, and connect Google without an AI key.", "system");
@@ -735,24 +744,99 @@
         add(message, "user");
         send.disabled = true;
         try {
-          const res = await fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message }),
-          });
-          const data = await res.json();
-          (data.due || []).forEach(addDue);
-          if (!res.ok) {
-            add(data.error || "Jarvis could not answer that.", "system");
-          } else {
-            add(data.reply || "", "jarvis");
-          }
+          await sendChat(message);
         } catch (err) {
           add("Could not reach the local Jarvis server.", "system");
         }
         send.disabled = !ready;
         refreshStatus();
       });
+
+      async function sendChat(message) {
+        const res = await fetch("/api/chat/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+          body: JSON.stringify({ message }),
+        });
+        const ctype = (res.headers.get("content-type") || "").toLowerCase();
+        if (!res.ok || !ctype.includes("event-stream")) {
+          let data = {};
+          try { data = await res.json(); } catch (err) {}
+          (data.due || []).forEach(addDue);
+          add(data.error || "Jarvis could not answer that.", "system");
+          return;
+        }
+        const live = document.createElement("div");
+        live.className = "msg jarvis live";
+        log.appendChild(live);
+        live.scrollIntoView({ block: "nearest" });
+        const state = { status: "", steps: [], reply: "" };
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parsed = takeSseEvents(buffer);
+          buffer = parsed.buffer;
+          parsed.events.forEach((evt) => applyChatEvent(live, state, evt));
+        }
+        if (buffer.trim()) {
+          takeSseEvents(buffer + "\n\n").events.forEach((evt) => applyChatEvent(live, state, evt));
+        }
+        live.classList.remove("live");
+        if (!live.textContent) live.textContent = state.reply || "…";
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function takeSseEvents(buffer) {
+        const events = [];
+        let rest = buffer;
+        let idx = rest.indexOf("\n\n");
+        while (idx >= 0) {
+          const block = rest.slice(0, idx);
+          rest = rest.slice(idx + 2);
+          block.split("\n").forEach((line) => {
+            if (!line.startsWith("data:")) return;
+            const raw = line.slice(5).trim();
+            if (!raw) return;
+            try { events.push(JSON.parse(raw)); } catch (err) {}
+          });
+          idx = rest.indexOf("\n\n");
+        }
+        return { events, buffer: rest };
+      }
+
+      function applyChatEvent(live, state, evt) {
+        if (!evt || !evt.type) return;
+        if (evt.type === "due") {
+          (evt.items || []).forEach(addDue);
+          return;
+        }
+        if (evt.type === "error") {
+          live.classList.remove("live");
+          live.className = "msg system";
+          live.textContent = evt.error || "Jarvis could not answer that.";
+          return;
+        }
+        if (evt.type === "status" && !state.reply && !state.steps.length) {
+          state.status = evt.text || "Planning…";
+        } else if (evt.type === "step") {
+          const agent = evt.agent || "Agent";
+          const text = evt.text || "";
+          state.steps.push("▸ " + agent + (text ? "\n" + text : ""));
+        } else if (evt.type === "token") {
+          state.reply += evt.text || "";
+        } else if (evt.type === "done" && !state.reply) {
+          state.reply = evt.reply || state.reply;
+        }
+        let body = "";
+        if (state.steps.length) body = state.steps.join("\n\n");
+        if (state.reply) body = body ? body + "\n\n" + state.reply : state.reply;
+        live.textContent = body || state.status || "…";
+        log.scrollTop = log.scrollHeight;
+      }
 
       connectBtn.addEventListener("click", async () => {
         connectBtn.disabled = true;

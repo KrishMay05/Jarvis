@@ -84,7 +84,7 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Mail | Gmail inbox/search and full message bodies after Connect Google in the web UI or `python main.py --connect google` (OAuth, not an AI key) |
 | Calendar | Today's / tomorrow's / this week's Google Calendar agenda after the same Google login |
 | MCP tools | Local stdio servers from `mcp.json` or the localhost UI MCP editor (no extra AI key) |
-| Web UI | `python main.py --serve` on 127.0.0.1 (paste the AI key in the sidebar or use `.env`; Connect Google there too) |
+| Web UI | `python main.py --serve` on 127.0.0.1 (paste the AI key in the sidebar or use `.env`; Connect Google there too; chat streams live) |
 
 ## MCP connections
 
@@ -209,12 +209,13 @@ The REPL is optional. Start the UI even before you have a key:
 python main.py --serve --open
 ```
 
-Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. **Paste one AI key** there to unlock chat without editing `.env` or restarting. **Remember facts, schedule automations, and connect MCP servers** in that same sidebar — no chat phrasing and no extra API key. **Connect Google** and **Disconnect** live there too — same OAuth as `--connect google`. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar, MCP tools. **Due reminders appear in the chat log on their own** while `--serve` is running; you do not need to send a message or set up system cron for that.
+Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. **Paste one AI key** there to unlock chat without editing `.env` or restarting. **Remember facts, schedule automations, and connect MCP servers** in that same sidebar — no chat phrasing and no extra API key. **Connect Google** and **Disconnect** live there too — same OAuth as `--connect google`. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar, MCP tools. **Replies stream into the chat log** (planning, specialist steps, then tokens) so Send is not frozen. **Due reminders appear in the chat log on their own** while `--serve` is running; you do not need to send a message or set up system cron for that.
 
 - No extra API key and no cloud UI vendor
 - Binds to loopback so the assistant is not on your LAN
 - Works without a key too: paste a Gemini / OpenAI / Anthropic key in the sidebar (saved to local `.env`), remember facts, schedule reminders, add MCP servers, or keep chat paused and still connect Google
 - Status/health are JSON at `/api/status` and `/api/health` (including optional LLM fallbacks)
+- Chat is `POST /api/chat` (full reply) or `POST /api/chat/stream` (SSE: status, specialist steps, tokens, due jobs)
 - Memory facts are JSON at `/api/memory` (`POST` to add, `/api/memory/forget` to drop)
 - Automations are JSON at `/api/automations` (`POST` to add, `/cancel`, `/pause`, `/enable`)
 - MCP servers are JSON at `/api/mcp` (`POST` to add/update, `/remove`, `/disable`, `/enable`, `/reload`)
@@ -239,12 +240,12 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 - `src/automation/` — local job store, schedule parser, and due-job runner
 - `src/computer/` — public-web fetch, HTML extract, and in-process link following
 - `src/config.py` — one-key provider detection (extra keys are optional LLM backups)
-- `src/llm.py` — Gemini / OpenAI / Anthropic client with automatic provider failover
+- `src/llm.py` — Gemini / OpenAI / Anthropic client with automatic provider failover and streaming
 - `src/mcp/` — stdio MCP client, `mcp.json` loader, and localhost UI save/reload
 - `src/memory/` — local persistent facts and recent turns
 - `src/orchestrator.py` — routes a request, loops specialists, then answers
 - `src/tools/` — weather, time, research, memory, automation, computer, mail, calendar, MCP adapters
-- `src/ui/` — localhost web chat UI (`--serve`; background automation ticker; memory, automation, and MCP editors)
+- `src/ui/` — localhost web chat UI (`--serve`; streaming replies; background automation ticker; memory, automation, and MCP editors)
 - `tests/` — unit tests that do not need live API keys
 
 ## Roadmap
@@ -267,5 +268,6 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 14. ~~Memory and automation editors in the localhost UI~~ (list/add/forget facts and schedule/pause/cancel jobs without chatting)
 15. ~~MCP editor in the localhost UI~~ (add/disable/remove/reload stdio servers without editing `mcp.json` by hand)
 16. ~~Read full Gmail bodies and calendar today/tomorrow/week windows~~ (same Google OAuth; still readonly)
-17. Desktop / JS-capable computer use (Playwright or screenshot+input)
-18. Microsoft / Outlook OAuth using the same auth store
+17. ~~Streaming replies in the localhost UI~~ (SSE over the same one AI key; tool steps stay visible)
+18. Desktop / JS-capable computer use (Playwright or screenshot+input)
+19. Microsoft / Outlook OAuth using the same auth store

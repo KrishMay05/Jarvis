@@ -198,3 +198,58 @@ def test_orchestrator_invalid_json_falls_back_to_user_reply(monkeypatch):
         lambda prompt, model="gemini-2.0-flash": "not json at all",
     )
     assert orchestrator.handle_message("hello") == "not json at all"
+
+
+def test_handle_message_events_streams_chat_tokens(monkeypatch):
+    chat = Agent(
+        Name="Chat Agent",
+        Description="General conversation",
+        Tools=[],
+        Model="gemini-2.0-flash",
+    )
+    orchestrator = AgentOrchestrator([chat])
+    monkeypatch.setattr(
+        "src.orchestrator.query_llm",
+        lambda prompt, model="gemini-2.0-flash": '{"action": "Chat Agent", "input": "hello", "next_action": ""}',
+    )
+    monkeypatch.setattr(
+        "src.agent.stream_llm",
+        lambda prompt, model="gemini-2.0-flash": iter(["Good ", "day."]),
+    )
+    events = list(orchestrator.handle_message_events("hello"))
+    kinds = [event["type"] for event in events]
+    assert kinds[0] == "status"
+    assert {"token", "done"} <= set(kinds)
+    tokens = "".join(event["text"] for event in events if event["type"] == "token")
+    assert tokens == "Good day."
+    assert events[-1] == {"type": "done", "reply": "Good day."}
+
+
+def test_handle_message_events_emits_specialist_steps(monkeypatch):
+    weather = Agent(
+        Name="Weather Agent",
+        Description="Weather",
+        Tools=[FakeTool()],
+        Model="gemini-2.0-flash",
+    )
+    orchestrator = AgentOrchestrator([weather])
+    monkeypatch.setattr(
+        "src.orchestrator.query_llm",
+        _scripted(
+            [
+                '{"action": "Weather Agent", "input": "NYC", "next_action": ""}',
+                '{"action": "respond_to_user", "input": "Sunny in NYC.", "next_action": ""}',
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "src.agent.query_llm",
+        lambda prompt, model="gemini-2.0-flash": '{"action": "echo", "args": "NYC"}',
+    )
+    events = list(orchestrator.handle_message_events("weather in NYC"))
+    steps = [event for event in events if event["type"] == "step"]
+    assert steps[0]["agent"] == "Weather Agent"
+    assert "echoed:NYC" in steps[0]["text"]
+    tokens = "".join(event["text"] for event in events if event["type"] == "token")
+    assert tokens == "Sunny in NYC."
+    assert events[-1]["reply"] == "Sunny in NYC."

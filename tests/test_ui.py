@@ -44,6 +44,9 @@ def test_index_is_self_contained_html():
     assert "text/html" in response.content_type
     assert "Jarvis" in html
     assert "/api/chat" in html
+    assert "/api/chat/stream" in html
+    assert "event-stream" in html
+    assert "Replies stream" in html
     assert "/api/status" in html
     assert "/api/due" in html
     assert "/api/memory" in html
@@ -571,6 +574,176 @@ def test_chat_consumes_queued_due_jobs():
     assert payload["reply"] == "heard:hello"
     assert any("drink water" in line for line in payload["due"])
     assert json.loads(app.dispatch("GET", "/api/due").body)["due"] == []
+
+
+def _sse_events(body: bytes) -> list[dict]:
+    events = []
+    for block in body.decode("utf-8").split("\n\n"):
+        for line in block.split("\n"):
+            if line.startswith("data:"):
+                events.append(json.loads(line[5:].strip()))
+    return events
+
+
+class StreamingOrchestrator(FakeOrchestrator):
+    def handle_message_events(self, text: str, *, stream_tokens: bool = True):
+        self.calls.append(text)
+        yield {"type": "status", "text": "Planning…"}
+        yield {"type": "token", "text": "Hel"}
+        yield {"type": "token", "text": f"lo:{text}"}
+        yield {"type": "done", "reply": f"Hello:{text}"}
+
+
+def test_chat_stream_requires_key():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    response = app.dispatch(
+        "POST", "/api/chat/stream", json.dumps({"message": "hello"}).encode()
+    )
+    payload = json.loads(response.body)
+    assert response.status == 503
+    assert "No AI API key found" in payload["error"]
+
+
+def test_chat_stream_emits_sse_tokens_and_due_jobs():
+    orch = StreamingOrchestrator()
+    app = JarvisWebApp(
+        orchestrator=orch,
+        settings=LLMSettings(provider="openai", api_key="sk-test", model="gpt-4o-mini"),
+    )
+    response = app.dispatch(
+        "POST",
+        "/api/chat/stream",
+        json.dumps({"message": "  What time is it?  "}).encode(),
+    )
+    assert response.status == 200
+    assert "event-stream" in response.content_type
+    events = _sse_events(response.body)
+    assert events[0]["type"] == "due"
+    assert events[0]["items"] == ["Reminder: stretch"]
+    tokens = "".join(event["text"] for event in events if event["type"] == "token")
+    assert tokens == "Hello:What time is it?"
+    assert events[-1] == {"type": "done", "reply": "Hello:What time is it?"}
+    assert orch.calls == ["What time is it?"]
+    assert orch.memory[-1] == "User: What time is it?"
+    assert PASTE_KEY not in response.body.decode("utf-8")
+
+
+def test_chat_stream_falls_back_to_handle_message():
+    orch = FakeOrchestrator()
+    app = JarvisWebApp(
+        orchestrator=orch,
+        settings=LLMSettings(provider="openai", api_key="sk-test", model="gpt-4o-mini"),
+    )
+    response = app.dispatch(
+        "POST",
+        "/api/chat/stream",
+        json.dumps({"message": "hello"}).encode(),
+    )
+    events = _sse_events(response.body)
+    tokens = "".join(event["text"] for event in events if event["type"] == "token")
+    assert tokens == "heard:hello"
+    assert events[-1]["type"] == "done"
+    assert orch.calls == ["hello"]
+
+
+def test_http_server_streams_chat_without_content_length():
+    orch = StreamingOrchestrator()
+    app = JarvisWebApp(
+        orchestrator=orch,
+        settings=LLMSettings(provider="openai", api_key="sk-test", model="gpt-4o-mini"),
+    )
+    httpd = app.make_server("127.0.0.1", 0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = httpd.server_address[1]
+        req = Request(
+            f"http://127.0.0.1:{port}/api/chat/stream",
+            data=json.dumps({"message": "stream please"}).encode(),
+            headers={"Content-Type": "application/json", "Accept": "text/event-stream"},
+            method="POST",
+        )
+        with urlopen(req, timeout=5) as resp:
+            ctype = resp.headers.get("Content-Type", "")
+            assert "event-stream" in ctype
+            assert resp.headers.get("Content-Length") in (None, "")
+            body = resp.read()
+        events = _sse_events(body)
+        tokens = "".join(event["text"] for event in events if event["type"] == "token")
+        assert tokens == "Hello:stream please"
+        assert events[-1]["reply"] == "Hello:stream please"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_http_server_flushes_sse_events_before_reply_finishes():
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowOrchestrator(FakeOrchestrator):
+        def handle_message_events(self, text: str, *, stream_tokens: bool = True):
+            self.calls.append(text)
+            yield {"type": "status", "text": "Planning…"}
+            started.set()
+            assert release.wait(timeout=2)
+            yield {"type": "token", "text": "later"}
+            yield {"type": "done", "reply": "later"}
+
+    orch = SlowOrchestrator()
+    app = JarvisWebApp(
+        orchestrator=orch,
+        settings=LLMSettings(provider="openai", api_key="sk-test", model="gpt-4o-mini"),
+    )
+    httpd = app.make_server("127.0.0.1", 0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = httpd.server_address[1]
+        sock = __import__("socket").create_connection(("127.0.0.1", port), timeout=5)
+        try:
+            payload = json.dumps({"message": "hello"}).encode()
+            req = (
+                b"POST /api/chat/stream HTTP/1.1\r\n"
+                b"Host: 127.0.0.1\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Content-Length: " + str(len(payload)).encode() + b"\r\n"
+                b"Connection: close\r\n\r\n" + payload
+            )
+            sock.sendall(req)
+            buf = b""
+            deadline = time.time() + 3
+            while b"Planning" not in buf and time.time() < deadline:
+                sock.settimeout(0.5)
+                try:
+                    chunk = sock.recv(4096)
+                except TimeoutError:
+                    continue
+                if not chunk:
+                    break
+                buf += chunk
+            assert b"event-stream" in buf
+            assert b"Planning" in buf
+            assert b"later" not in buf
+            release.set()
+            deadline = time.time() + 3
+            while b'"done"' not in buf and time.time() < deadline:
+                sock.settimeout(0.5)
+                try:
+                    chunk = sock.recv(4096)
+                except TimeoutError:
+                    continue
+                if not chunk:
+                    break
+                buf += chunk
+            assert b"later" in buf
+            assert b'"done"' in buf
+        finally:
+            sock.close()
+    finally:
+        release.set()
+        httpd.shutdown()
+        httpd.server_close()
 
 
 def test_start_ticker_fires_overdue_reminder():
