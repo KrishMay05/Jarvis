@@ -83,6 +83,15 @@ def test_list_facts_returns_a_copy(tmp_path):
     assert len(store.facts) == 1
 
 
+def test_list_turns_returns_a_copy(tmp_path):
+    store = MemoryStore(tmp_path / "memory.json")
+    store.record_exchange("hello", "At your service.")
+    listed = store.list_turns()
+    assert [turn.role for turn in listed] == ["user", "assistant"]
+    listed.clear()
+    assert len(store.turns) == 2
+
+
 def test_memory_tool_parses_phrases_and_dicts(tmp_path):
     tool = MemoryTool(MemoryStore(tmp_path / "memory.json"))
     assert "Remembered" in tool.use("I drink tea in the morning")

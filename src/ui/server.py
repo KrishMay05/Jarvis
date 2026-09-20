@@ -119,6 +119,8 @@ class JarvisWebApp:
             return _json(200, self._memory_payload())
         if verb == "GET" and route == "/api/due":
             return _json(200, {"due": self.take_due()})
+        if verb == "GET" and route == "/api/chat/history":
+            return _json(200, self._chat_history_payload())
         if verb == "GET" and route == "/api/mcp":
             return _json(200, self._mcp_payload())
         if verb == "POST" and route == "/api/chat":
@@ -173,6 +175,7 @@ class JarvisWebApp:
             "/api/memory",
             "/api/mcp",
             "/api/due",
+            "/api/chat/history",
         }:
             return self.dispatch("GET", path, b"")
         if verb not in {"GET", "POST"}:
@@ -262,6 +265,14 @@ class JarvisWebApp:
         store = self._memory_store()
         return {
             "facts": [fact.to_dict() for fact in store.list_facts()],
+            "status": store.status_line(),
+        }
+
+    def _chat_history_payload(self) -> dict:
+        """Recent user/assistant turns from local memory — no extra API key."""
+        store = self._memory_store()
+        return {
+            "turns": [turn.to_dict() for turn in store.list_turns()],
             "status": store.status_line(),
         }
 
@@ -897,6 +908,7 @@ def serve(
         "Reminders fire in the background while this UI is open "
         f"(every {int(app.tick_seconds)}s) — no extra cron. "
         "Chat replies stream live — no extra API key. "
+        "Refreshing the page restores recent conversation from local memory. "
         "Only localhost can connect. Ctrl+C to stop.",
         flush=True,
     )
