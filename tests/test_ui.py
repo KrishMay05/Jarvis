@@ -24,7 +24,10 @@ class FakeOrchestrator:
 
     def handle_message(self, text: str) -> str:
         self.calls.append(text)
-        return f"heard:{text}"
+        reply = f"heard:{text}"
+        if self.memory_store is not None:
+            self.memory_store.record_exchange(text, reply)
+        return reply
 
     def drain_due_automations(self, now=None):
         if self.automation_store is not None:
@@ -45,6 +48,9 @@ def test_index_is_self_contained_html():
     assert "Jarvis" in html
     assert "/api/chat" in html
     assert "/api/chat/stream" in html
+    assert "/api/chat/history" in html
+    assert "loadChatHistory" in html
+    assert "Restored recent conversation" in html
     assert "event-stream" in html
     assert "Replies stream" in html
     assert "/api/status" in html
@@ -207,6 +213,7 @@ def test_describe_runtime_mentions_web_ui(monkeypatch):
     assert "web UI" in text
     assert "--serve" in text
     assert "paste an AI key" in text
+    assert "restored history" in text
     assert "memory/automations/MCP" in text
     assert "Connect Google" in text
 
@@ -795,6 +802,78 @@ def test_http_due_poll_roundtrip():
         with urlopen(f"http://127.0.0.1:{port}/api/due", timeout=5) as resp:
             empty = json.loads(resp.read())
         assert empty["due"] == []
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_chat_history_is_empty_without_turns():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    response = app.dispatch("GET", "/api/chat/history")
+    payload = json.loads(response.body)
+    assert response.status == 200
+    assert payload["turns"] == []
+    assert "Memory:" in payload["status"]
+    head = app.dispatch("HEAD", "/api/chat/history")
+    assert head.status == 200
+
+
+def test_chat_history_works_without_ai_key():
+    store = MemoryStore()
+    store.record_exchange("What time is it?", "It is noon in Austin.")
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    payload = json.loads(app.dispatch("GET", "/api/chat/history").body)
+    assert [turn["role"] for turn in payload["turns"]] == ["user", "assistant"]
+    assert payload["turns"][0]["text"] == "What time is it?"
+    assert payload["turns"][1]["text"] == "It is noon in Austin."
+    assert payload["turns"][0]["at"]
+    html = app.dispatch("GET", "/").body.decode("utf-8")
+    assert "/api/chat/history" in html
+    assert "loadChatHistory" in html
+
+
+def test_chat_history_uses_orchestrator_store_and_records_new_turns():
+    memory = MemoryStore()
+    memory.record_exchange("hi", "hello")
+    orch = FakeOrchestrator()
+    orch.memory_store = memory
+    app = JarvisWebApp(
+        orchestrator=orch,
+        settings=LLMSettings(provider="openai", api_key="sk-test", model="gpt-4o-mini"),
+    )
+    before = json.loads(app.dispatch("GET", "/api/chat/history").body)
+    assert before["turns"][0]["text"] == "hi"
+    chat = app.dispatch(
+        "POST",
+        "/api/chat",
+        json.dumps({"message": "ping"}).encode(),
+    )
+    assert chat.status == 200
+    after = json.loads(app.dispatch("GET", "/api/chat/history").body)
+    roles = [turn["role"] for turn in after["turns"]]
+    texts = [turn["text"] for turn in after["turns"]]
+    assert roles == ["user", "assistant", "user", "assistant"]
+    assert texts == ["hi", "hello", "ping", "heard:ping"]
+
+
+def test_http_chat_history_roundtrip():
+    store = MemoryStore()
+    store.record_exchange("remember Austin", "Got it.")
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    httpd = app.make_server("127.0.0.1", 0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = httpd.server_address[1]
+        with urlopen(f"http://127.0.0.1:{port}/api/chat/history", timeout=5) as resp:
+            payload = json.loads(resp.read())
+        assert payload["turns"][0]["role"] == "user"
+        assert payload["turns"][0]["text"] == "remember Austin"
+        assert payload["turns"][1]["text"] == "Got it."
+        with urlopen(f"http://127.0.0.1:{port}/", timeout=5) as resp:
+            html = resp.read().decode()
+        assert "loadChatHistory" in html
+        assert "Restored recent conversation" in html
     finally:
         httpd.shutdown()
         httpd.server_close()
