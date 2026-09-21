@@ -295,6 +295,11 @@
           </form>
           <h2>Auth</h2>
           <p id="auth" class="meta"></p>
+          <form id="google-config-form" class="key-form">
+            <input id="google-client-id" type="text" autocomplete="off" spellcheck="false" placeholder="Desktop OAuth client ID (…apps.googleusercontent.com)" />
+            <input id="google-client-secret" type="password" autocomplete="off" spellcheck="false" placeholder="Optional client secret (web clients)" />
+            <button type="submit" id="save-google-oauth" class="secondary">Save Google client</button>
+          </form>
           <div class="auth-actions">
             <button type="button" id="connect-google" class="secondary" disabled>Connect Google</button>
             <button type="button" id="disconnect-google" class="ghost" disabled>Disconnect</button>
@@ -319,7 +324,7 @@
             <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox, today's calendar, MCP tools"></textarea>
             <button id="send" type="submit">Send</button>
           </form>
-          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. Replies stream as Jarvis works (tool steps, then the answer). Refreshing this page restores recent conversation from local memory (same file as the REPL — no extra API key). Remember facts, schedule automations, and connect MCP servers here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Connect Google here for mail and calendar — OAuth, not a second AI key.</div>
+          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. Replies stream as Jarvis works (tool steps, then the answer). Refreshing this page restores recent conversation from local memory (same file as the REPL — no extra API key). Remember facts, schedule automations, and connect MCP servers here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Paste a Google OAuth client ID here, then Connect Google for mail and calendar — OAuth, not a second AI key, and no restart.</div>
         </section>
       </div>
     </div>
@@ -334,6 +339,10 @@
       const keyInput = document.getElementById("api-key");
       const keyProvider = document.getElementById("key-provider");
       const saveKey = document.getElementById("save-key");
+      const googleForm = document.getElementById("google-config-form");
+      const googleClientId = document.getElementById("google-client-id");
+      const googleClientSecret = document.getElementById("google-client-secret");
+      const saveGoogle = document.getElementById("save-google-oauth");
       let ready = false;
 
       function add(text, cls) {
@@ -424,7 +433,7 @@
         });
         if (!log.childElementCount) {
           if (ready) {
-            add("At your service. Weather, research, memory, automations, computer use, mail, calendar, and MCP — one AI key. Replies stream here as I work. Refresh to restore this conversation from local memory. Remember facts, schedule reminders, and connect MCP servers in the sidebar without chatting. Reminders fire here while the page is open. Connect Google in the sidebar when you want inbox, full email bodies, and today's calendar.", "jarvis");
+            add("At your service. Weather, research, memory, automations, computer use, mail, calendar, and MCP — one AI key. Replies stream here as I work. Refresh to restore this conversation from local memory. Remember facts, schedule reminders, and connect MCP servers in the sidebar without chatting. Reminders fire here while the page is open. Paste a Google OAuth client ID in the sidebar, then Connect Google when you want inbox, full email bodies, and today's calendar.", "jarvis");
           } else {
             add(data.error || "Paste one AI API key in the sidebar. No .env edit and no restart.", "system");
             add("You can still remember facts, schedule reminders, connect MCP servers, and connect Google without an AI key.", "system");
@@ -437,14 +446,17 @@
         const hint = document.getElementById("auth-hint");
         connectBtn.disabled = !google.configured || Boolean(google.connected);
         disconnectBtn.disabled = !google.connected;
+        saveGoogle.disabled = data.can_install_google === false;
         if (!google.configured) {
-          hint.textContent = "Add GOOGLE_OAUTH_CLIENT_ID to .env, then restart --serve. OAuth is not a second AI key.";
+          hint.textContent = "Paste a Google Cloud Desktop OAuth client ID here — saved locally, no restart. OAuth is not a second AI key.";
         } else if (google.connected) {
           hint.textContent = google.email
             ? ("Connected as " + google.email + ". Mail and calendar use this login.")
             : "Google is connected. Mail and calendar use this login.";
         } else {
-          hint.textContent = "Connect Google here — no extra AI key. Chat can stay paused.";
+          hint.textContent = google.has_secret
+            ? "Client ID saved (with secret). Connect Google here — no extra AI key. Chat can stay paused."
+            : "Client ID saved. Connect Google here — no extra AI key. Chat can stay paused.";
         }
       }
 
@@ -852,6 +864,32 @@
         live.textContent = body || state.status || "…";
         log.scrollTop = log.scrollHeight;
       }
+
+      googleForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const client_id = googleClientId.value.trim();
+        const client_secret = googleClientSecret.value.trim();
+        if (!client_id) {
+          add("Paste a Google OAuth client ID first.", "system");
+          return;
+        }
+        saveGoogle.disabled = true;
+        try {
+          const body = { client_id };
+          if (client_secret) body.client_secret = client_secret;
+          const { res, data } = await postJson("/api/auth/google/config", body);
+          if (!res.ok) {
+            add(data.error || "Could not save that Google OAuth client.", "system");
+          } else {
+            googleClientId.value = "";
+            googleClientSecret.value = "";
+            add(data.message || "Google OAuth client saved. Connect Google when you are ready.", "system");
+          }
+        } catch (err) {
+          add("Could not reach the local Jarvis server.", "system");
+        }
+        await refreshStatus();
+      });
 
       connectBtn.addEventListener("click", async () => {
         connectBtn.disabled = true;

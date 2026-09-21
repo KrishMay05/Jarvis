@@ -5,14 +5,18 @@ import pytest
 
 from src.config import (
     InvalidAPIKeyError,
+    InvalidGoogleClientError,
     MissingAPIKeyError,
     apply_llm_key,
+    apply_google_oauth_config,
     describe_runtime,
     env_file_path,
     get_llm_settings,
     infer_provider,
+    install_google_oauth_config,
     install_llm_key,
     list_llm_settings,
+    persist_google_oauth_config,
     persist_llm_key,
 )
 
@@ -232,3 +236,48 @@ def test_describe_runtime_mentions_optional_fallback(monkeypatch):
     assert "Fallback LLM: openai (gpt-4o-mini)" in text
     assert "optional extra key" in text.lower()
     assert "none required" in text.lower()
+
+
+def test_normalize_google_client_id_rejects_placeholder():
+    from src.config import normalize_google_client_id
+
+    with pytest.raises(InvalidGoogleClientError, match="Paste a Google OAuth client ID"):
+        normalize_google_client_id("   ")
+    with pytest.raises(InvalidGoogleClientError, match="placeholder"):
+        normalize_google_client_id("example.apps.googleusercontent.com")
+    with pytest.raises(InvalidGoogleClientError, match="apps.googleusercontent.com"):
+        normalize_google_client_id("not-a-google-client-id-value")
+    assert (
+        normalize_google_client_id('"abc.apps.googleusercontent.com"')
+        == "abc.apps.googleusercontent.com"
+    )
+
+
+def test_install_google_oauth_config_sets_env_and_preserves_llm_key(tmp_path, monkeypatch):
+    target = tmp_path / "mixed.env"
+    target.write_text("# keep me\nOPENAI_API_KEY=sk-already-there\n", encoding="utf-8")
+    monkeypatch.setenv("JARVIS_ENV_PATH", str(tmp_path / "unused.env"))
+    cid = "123456789-config-test.apps.googleusercontent.com"
+    written = persist_google_oauth_config(cid, "GOCSPX-optional-secret", path=target)
+    assert written == target
+    text = target.read_text(encoding="utf-8")
+    assert "# keep me" in text
+    assert "OPENAI_API_KEY=sk-already-there" in text
+    assert f"GOOGLE_OAUTH_CLIENT_ID={cid}" in text
+    assert "GOOGLE_OAUTH_CLIENT_SECRET=GOCSPX-optional-secret" in text
+    mode = stat.S_IMODE(target.stat().st_mode)
+    assert mode == 0o600
+
+    applied = apply_google_oauth_config(cid)
+    assert applied == cid
+    assert os.environ["GOOGLE_OAUTH_CLIENT_ID"] == cid
+
+
+def test_install_google_oauth_config_uses_jarvis_env_path(tmp_path, monkeypatch):
+    target = tmp_path / "google.env"
+    monkeypatch.setenv("JARVIS_ENV_PATH", str(target))
+    cid = "abc.apps.googleusercontent.com"
+    assert install_google_oauth_config(cid) == cid
+    assert target.exists()
+    assert f"GOOGLE_OAUTH_CLIENT_ID={cid}" in target.read_text(encoding="utf-8")
+    assert os.environ["GOOGLE_OAUTH_CLIENT_ID"] == cid

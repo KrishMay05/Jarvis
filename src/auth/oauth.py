@@ -54,11 +54,12 @@ def missing_client_id_message() -> str:
     return (
         "Google OAuth is not configured yet — this is not a second AI key.\n"
         "Create a Desktop OAuth client in Google Cloud Console, enable the\n"
-        "Gmail API and Google Calendar API, then put the client id in .env:\n"
+        "Gmail API and Google Calendar API, then paste the client id in the\n"
+        "localhost UI (python main.py --serve) — no .env edit and no restart —\n"
+        "or put it in .env:\n"
         "  GOOGLE_OAUTH_CLIENT_ID=....apps.googleusercontent.com\n"
         "Optional for web clients: GOOGLE_OAUTH_CLIENT_SECRET=...\n"
-        "Then run: python main.py --connect google\n"
-        "or click Connect Google in the localhost web UI (python main.py --serve)."
+        "Then click Connect Google, or run: python main.py --connect google."
     )
 
 

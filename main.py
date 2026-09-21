@@ -68,7 +68,7 @@ def main() -> None:
     parser.add_argument(
         "--serve",
         action="store_true",
-        help="Start the localhost web UI (paste one AI key in the page, or use .env)",
+        help="Start the localhost web UI (paste an AI key or Google OAuth client ID, or use .env)",
     )
     parser.add_argument(
         "--port",
@@ -143,7 +143,8 @@ def main() -> None:
             "Computer use can open public web pages. Mail and calendar use "
             "Google OAuth (Connect Google in --serve, or --connect google). "
             "MCP servers come from mcp.json. A localhost web UI is "
-            "python main.py --serve — paste an AI key there if .env is empty. "
+            "python main.py --serve — paste an AI key or Google OAuth client ID "
+            "there if .env is empty. "
             "Leave --serve running to fire reminders in the background."
         )
         print("Type exit to leave.")

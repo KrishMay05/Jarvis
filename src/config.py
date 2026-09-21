@@ -60,6 +60,36 @@ _PLACEHOLDER_KEYS = frozenset(
         "sk-ant-...",
     }
 )
+
+GOOGLE_OAUTH_CLIENT_ID_VAR = "GOOGLE_OAUTH_CLIENT_ID"
+GOOGLE_OAUTH_CLIENT_SECRET_VAR = "GOOGLE_OAUTH_CLIENT_SECRET"
+_GOOGLE_CLIENT_SUFFIX = ".apps.googleusercontent.com"
+_MIN_GOOGLE_CLIENT_LEN = 24
+_MAX_GOOGLE_CLIENT_LEN = 256
+_MIN_GOOGLE_SECRET_LEN = 8
+_MAX_GOOGLE_SECRET_LEN = 512
+_PLACEHOLDER_GOOGLE_IDS = frozenset(
+    {
+        "....apps.googleusercontent.com",
+        "your-client-id.apps.googleusercontent.com",
+        "example.apps.googleusercontent.com",
+        "changeme.apps.googleusercontent.com",
+        "client-id.apps.googleusercontent.com",
+    }
+)
+_PLACEHOLDER_GOOGLE_SECRETS = frozenset(
+    {
+        "changeme",
+        "your-client-secret",
+        "client-secret",
+        "secret",
+        "xxx",
+        "xxxx",
+        "todo",
+        "paste-here",
+        "replace-me",
+    }
+)
 _ENV_ASSIGNMENT = re.compile(
     r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$"
 )
@@ -81,6 +111,10 @@ class MissingAPIKeyError(RuntimeError):
 
 class InvalidAPIKeyError(ValueError):
     """Raised when a pasted key is empty or not plausible."""
+
+
+class InvalidGoogleClientError(ValueError):
+    """Raised when a pasted Google OAuth client id is empty or implausible."""
 
 
 def get_llm_settings() -> LLMSettings:
@@ -177,7 +211,7 @@ def describe_runtime(settings: LLMSettings | None = None) -> str:
         "research (Wikipedia + public web), chat (your LLM), "
         "memory (local file), automations (local schedule; --serve fires them in the background), "
         "computer (public web pages), mail/calendar (Google OAuth), "
-        "web UI (localhost --serve; paste an AI key, streaming chat, restored history, edit memory/automations/MCP, or Connect Google)\n"
+        "web UI (localhost --serve; paste an AI key or Google OAuth client ID, streaming chat, restored history, edit memory/automations/MCP, or Connect Google)\n"
         f"{mcp_status_line()}\n"
         f"{memory_status_line()}\n"
         f"{automation_status_line()}\n"
@@ -301,6 +335,93 @@ def install_llm_key(
     settings = apply_llm_key(api_key, provider)
     persist_llm_key(api_key, settings.provider, path=path)
     return settings
+
+
+def _strip_wrapping_quotes(value: str) -> str:
+    text = (value or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+        return text[1:-1].strip()
+    return text
+
+
+def normalize_google_client_id(client_id: str) -> str:
+    """Strip and reject empty or placeholder Google OAuth client IDs."""
+    cid = _strip_wrapping_quotes(client_id)
+    if not cid:
+        raise InvalidGoogleClientError("Paste a Google OAuth client ID first.")
+    if any(ch.isspace() for ch in cid):
+        raise InvalidGoogleClientError("That does not look like a Google OAuth client ID.")
+    if len(cid) < _MIN_GOOGLE_CLIENT_LEN:
+        raise InvalidGoogleClientError("That client ID is too short.")
+    if len(cid) > _MAX_GOOGLE_CLIENT_LEN:
+        raise InvalidGoogleClientError("That client ID is too long.")
+    if not cid.endswith(_GOOGLE_CLIENT_SUFFIX):
+        raise InvalidGoogleClientError(
+            "Google OAuth client IDs end with .apps.googleusercontent.com."
+        )
+    if cid.lower() in _PLACEHOLDER_GOOGLE_IDS:
+        raise InvalidGoogleClientError("Paste a real OAuth client ID, not a placeholder.")
+    return cid
+
+
+def normalize_google_client_secret(client_secret: str | None) -> str | None:
+    """Optional secret for web OAuth clients. Empty means leave it unchanged."""
+    if client_secret is None:
+        return None
+    secret = _strip_wrapping_quotes(str(client_secret))
+    if not secret:
+        return None
+    if any(ch.isspace() for ch in secret):
+        raise InvalidGoogleClientError(
+            "That does not look like a Google OAuth client secret."
+        )
+    if secret.lower() in _PLACEHOLDER_GOOGLE_SECRETS:
+        raise InvalidGoogleClientError("Paste a real OAuth client secret, not a placeholder.")
+    if len(secret) < _MIN_GOOGLE_SECRET_LEN or len(secret) > _MAX_GOOGLE_SECRET_LEN:
+        raise InvalidGoogleClientError("That client secret does not look valid.")
+    return secret
+
+
+def apply_google_oauth_config(
+    client_id: str,
+    client_secret: str | None = None,
+) -> str:
+    """Set Google OAuth app credentials in this process — no restart."""
+    cid = normalize_google_client_id(client_id)
+    secret = normalize_google_client_secret(client_secret)
+    os.environ[GOOGLE_OAUTH_CLIENT_ID_VAR] = cid
+    if secret is not None:
+        os.environ[GOOGLE_OAUTH_CLIENT_SECRET_VAR] = secret
+    return cid
+
+
+def persist_google_oauth_config(
+    client_id: str,
+    client_secret: str | None = None,
+    *,
+    path: Path | str | None = None,
+) -> Path:
+    """Write Google OAuth app credentials into local .env (mode 0600)."""
+    cid = normalize_google_client_id(client_id)
+    secret = normalize_google_client_secret(client_secret)
+    target = Path(path).expanduser() if path else env_file_path()
+    assignments = {GOOGLE_OAUTH_CLIENT_ID_VAR: cid}
+    if secret is not None:
+        assignments[GOOGLE_OAUTH_CLIENT_SECRET_VAR] = secret
+    _upsert_env_file(target, assignments)
+    return target
+
+
+def install_google_oauth_config(
+    client_id: str,
+    client_secret: str | None = None,
+    *,
+    path: Path | str | None = None,
+) -> str:
+    """Apply then persist a pasted Google OAuth client ID. Not a second AI key."""
+    cid = apply_google_oauth_config(client_id, client_secret)
+    persist_google_oauth_config(client_id, client_secret, path=path)
+    return cid
 
 
 def _upsert_env_file(path: Path, assignments: dict[str, str]) -> None:
