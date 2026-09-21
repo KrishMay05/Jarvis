@@ -63,9 +63,12 @@ def test_index_is_self_contained_html():
     assert "Fires in the background" in html
     assert "pollDue" in html
     assert "/api/key" in html
+    assert "/api/auth/google/config" in html
     assert "Connect Google" in html
     assert "Save key" in html
+    assert "Save Google client" in html
     assert "Paste Gemini" in html
+    assert "Desktop OAuth client ID" in html
     assert "Remember" in html
     assert "Schedule" in html
     assert "Add server" in html
@@ -86,6 +89,8 @@ def test_status_without_key_is_not_ready():
     assert payload["google"]["connected"] is False
     assert "localhost" in payload["bind"]
     assert payload["can_install_key"] is True
+    assert payload["can_install_google"] is True
+    assert payload["google"]["has_secret"] is False
     assert payload["scheduler"]["running"] is False
     assert payload["scheduler"]["pending_due"] == 0
     assert payload["memory_facts"] == []
@@ -213,6 +218,7 @@ def test_describe_runtime_mentions_web_ui(monkeypatch):
     assert "web UI" in text
     assert "--serve" in text
     assert "paste an AI key" in text
+    assert "Google OAuth client ID" in text
     assert "restored history" in text
     assert "memory/automations/MCP" in text
     assert "Connect Google" in text
@@ -224,7 +230,154 @@ def test_connect_google_requires_client_id():
     payload = json.loads(response.body)
     assert response.status == 400
     assert "GOOGLE_OAUTH_CLIENT_ID" in payload["error"]
+    assert "paste the client id" in payload["error"].lower()
     assert payload["configured"] is False
+
+
+PASTE_GOOGLE_CLIENT = "123456789-ui-paste.apps.googleusercontent.com"
+PASTE_GOOGLE_SECRET = "GOCSPX-ui-paste-secret-do-not-echo"
+
+
+def test_install_google_oauth_enables_connect_without_restart(tmp_path):
+    env_path = tmp_path / "google-from-ui.env"
+    app = JarvisWebApp(
+        missing_key="No AI API key found.",
+        env_path=env_path,
+        public_base="http://127.0.0.1:8787",
+    )
+    assert json.loads(app.dispatch("GET", "/api/status").body)["google"]["configured"] is False
+    response = app.dispatch(
+        "POST",
+        "/api/auth/google/config",
+        json.dumps(
+            {"client_id": PASTE_GOOGLE_CLIENT, "client_secret": PASTE_GOOGLE_SECRET}
+        ).encode(),
+    )
+    payload = json.loads(response.body)
+    assert response.status == 200
+    assert payload["ok"] is True
+    assert payload["configured"] is True
+    assert payload["has_secret"] is True
+    assert "no restart" in payload["message"].lower()
+    raw = response.body.decode()
+    assert PASTE_GOOGLE_CLIENT not in raw
+    assert PASTE_GOOGLE_SECRET not in raw
+    assert PASTE_GOOGLE_SECRET not in json.dumps(payload)
+    saved = env_path.read_text(encoding="utf-8")
+    assert f"GOOGLE_OAUTH_CLIENT_ID={PASTE_GOOGLE_CLIENT}" in saved
+    assert f"GOOGLE_OAUTH_CLIENT_SECRET={PASTE_GOOGLE_SECRET}" in saved
+
+    status = json.loads(app.dispatch("GET", "/api/status").body)
+    assert status["google"]["configured"] is True
+    assert status["google"]["has_secret"] is True
+    assert status["ready"] is False
+    assert PASTE_GOOGLE_CLIENT not in json.dumps(status)
+    assert PASTE_GOOGLE_SECRET not in json.dumps(status)
+
+    started = app.dispatch("POST", "/api/auth/google/connect", b"")
+    connect_payload = json.loads(started.body)
+    assert started.status == 200
+    assert connect_payload["ok"] is True
+    assert PASTE_GOOGLE_CLIENT in connect_payload["auth_url"]
+    assert app.ready is False
+
+
+def test_install_google_oauth_rejects_empty_and_placeholder():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    empty = app.dispatch("POST", "/api/auth/google/config", b'{"client_id":"   "}')
+    assert empty.status == 400
+    assert "Paste a Google OAuth client ID" in json.loads(empty.body)["error"]
+    placeholder = app.dispatch(
+        "POST",
+        "/api/auth/google/config",
+        b'{"client_id":"example.apps.googleusercontent.com"}',
+    )
+    assert placeholder.status == 400
+    bad_suffix = app.dispatch(
+        "POST",
+        "/api/auth/google/config",
+        b'{"client_id":"not-a-google-client"}',
+    )
+    assert bad_suffix.status == 400
+    bad = app.dispatch("POST", "/api/auth/google/config", b"not-json")
+    assert bad.status == 400
+
+
+def test_install_google_oauth_refuses_non_loopback_bind():
+    app = JarvisWebApp(
+        missing_key="No AI API key found.",
+        public_base="http://192.168.1.20:8787",
+    )
+    response = app.dispatch(
+        "POST",
+        "/api/auth/google/config",
+        json.dumps({"client_id": PASTE_GOOGLE_CLIENT}).encode(),
+    )
+    payload = json.loads(response.body)
+    assert response.status == 403
+    assert "localhost" in payload["error"]
+    assert json.loads(app.dispatch("GET", "/api/status").body)["google"]["configured"] is False
+
+
+def test_install_google_oauth_preserves_existing_secret_when_omitted(tmp_path, monkeypatch):
+    env_path = tmp_path / "keep-secret.env"
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "GOCSPX-already-there")
+    app = JarvisWebApp(env_path=env_path, public_base="http://127.0.0.1:8787")
+    response = app.dispatch(
+        "POST",
+        "/api/auth/google/config",
+        json.dumps({"client_id": PASTE_GOOGLE_CLIENT}).encode(),
+    )
+    assert response.status == 200
+    payload = json.loads(response.body)
+    assert payload["has_secret"] is True
+    saved = env_path.read_text(encoding="utf-8")
+    assert f"GOOGLE_OAUTH_CLIENT_ID={PASTE_GOOGLE_CLIENT}" in saved
+    assert "GOOGLE_OAUTH_CLIENT_SECRET" not in saved
+    assert json.loads(app.dispatch("GET", "/api/status").body)["google"]["has_secret"] is True
+
+
+def test_http_install_google_oauth_roundtrip(tmp_path, monkeypatch):
+    env_path = tmp_path / "http-google.env"
+    monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_ID", raising=False)
+    app = JarvisWebApp(
+        missing_key="No AI API key found.",
+        env_path=env_path,
+    )
+    httpd = app.make_server("127.0.0.1", 0)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = httpd.server_address[1]
+        app.public_base = f"http://127.0.0.1:{port}"
+        req = Request(
+            f"http://127.0.0.1:{port}/api/auth/google/config",
+            data=json.dumps({"client_id": PASTE_GOOGLE_CLIENT}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(req, timeout=5) as resp:
+            payload = json.loads(resp.read())
+        assert payload["ok"] is True
+        assert payload["configured"] is True
+        assert PASTE_GOOGLE_CLIENT not in json.dumps(payload)
+        with urlopen(f"http://127.0.0.1:{port}/api/status", timeout=5) as resp:
+            status = json.loads(resp.read())
+        assert status["google"]["configured"] is True
+        assert status["ready"] is False
+        connect_req = Request(
+            f"http://127.0.0.1:{port}/api/auth/google/connect",
+            data=b"",
+            method="POST",
+        )
+        with urlopen(connect_req, timeout=5) as resp:
+            started = json.loads(resp.read())
+        assert started["ok"] is True
+        assert PASTE_GOOGLE_CLIENT in started["auth_url"]
+        assert env_path.exists()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 def test_connect_google_works_without_ai_key(monkeypatch):

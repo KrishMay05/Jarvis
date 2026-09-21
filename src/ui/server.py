@@ -24,6 +24,7 @@ from src.auth.oauth import (
     disconnect_google,
     finish_google_login,
     google_client_id,
+    google_client_secret,
     missing_client_id_message,
     parse_oauth_callback,
 )
@@ -33,9 +34,11 @@ from src.automation.schedule import ScheduleParseError, parse_schedule
 from src.automation.store import AutomationStore, automation_status_line
 from src.config import (
     InvalidAPIKeyError,
+    InvalidGoogleClientError,
     LLMSettings,
     MissingAPIKeyError,
     describe_runtime,
+    install_google_oauth_config,
     install_llm_key,
     list_llm_settings,
 )
@@ -158,6 +161,8 @@ class JarvisWebApp:
             return self._set_mcp_disabled(body, False)
         if verb == "POST" and route == "/api/mcp/reload":
             return self._reload_mcp()
+        if verb == "POST" and route == "/api/auth/google/config":
+            return self._install_google_oauth(body)
         if verb == "POST" and route == "/api/auth/google/connect":
             return self._connect_google()
         if verb == "POST" and route == "/api/auth/google/disconnect":
@@ -235,6 +240,7 @@ class JarvisWebApp:
             "mcp_servers": self._mcp_payload()["servers"],
             "bind": "localhost only — not exposed on your LAN",
             "can_install_key": self._accepts_key_install(),
+            "can_install_google": self._accepts_key_install(),
             "scheduler": self._scheduler_status(),
         }
 
@@ -245,6 +251,7 @@ class JarvisWebApp:
             "configured": bool(google_client_id()),
             "connected": connected,
             "email": (account.email if account is not None else "") or "",
+            "has_secret": bool(google_client_secret()),
         }
 
     def _memory_store(self) -> MemoryStore:
@@ -794,6 +801,57 @@ class JarvisWebApp:
             },
         )
 
+    def _install_google_oauth(self, body: bytes) -> UiResponse:
+        """Save a pasted Google OAuth client ID locally — no restart, not an AI key."""
+        if not self._accepts_key_install():
+            return _json(
+                403,
+                {"error": "Google OAuth client IDs can only be pasted on localhost."},
+            )
+        try:
+            payload = json.loads(body.decode("utf-8") or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return _json(
+                400,
+                {"error": "Send JSON like {\"client_id\": \"....apps.googleusercontent.com\"}."},
+            )
+        if not isinstance(payload, dict):
+            return _json(400, {"error": "Send a JSON object with a client_id field."})
+        client_id = (
+            payload.get("client_id")
+            or payload.get("GOOGLE_OAUTH_CLIENT_ID")
+            or payload.get("clientId")
+            or ""
+        )
+        client_secret = payload.get("client_secret")
+        if client_secret is None:
+            client_secret = payload.get("GOOGLE_OAUTH_CLIENT_SECRET")
+        try:
+            install_google_oauth_config(
+                str(client_id or ""),
+                None if client_secret is None else str(client_secret),
+                path=self.env_path,
+            )
+        except InvalidGoogleClientError as exc:
+            return _json(400, {"error": str(exc), "configured": False})
+
+        status = self.status_payload()
+        google = status.get("google") or {}
+        return _json(
+            200,
+            {
+                "ok": True,
+                "configured": True,
+                "has_secret": bool(google.get("has_secret")),
+                "message": (
+                    "Google OAuth client saved on this machine in .env (gitignored). "
+                    "Connect Google when you are ready — no restart, still not a second AI key."
+                ),
+                "google": google,
+                "auth": status.get("auth"),
+            },
+        )
+
     def _connect_google(self) -> UiResponse:
         """Start PKCE login. Works without an AI key — OAuth is not a vendor key."""
         if not google_client_id():
@@ -903,7 +961,8 @@ def serve(
     elif settings is not None:
         print(f"Same key as the REPL · {settings.summary()}", flush=True)
     print(
-        "Connect Google from this page (OAuth, not a second AI key). "
+        "Paste a Google OAuth client ID on this page if .env does not have one yet "
+        "(OAuth, not a second AI key — no restart). "
         "Remember facts, schedule automations, and connect MCP servers in the sidebar — no extra API key. "
         "Reminders fire in the background while this UI is open "
         f"(every {int(app.tick_seconds)}s) — no extra cron. "

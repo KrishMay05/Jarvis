@@ -84,7 +84,7 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Mail | Gmail inbox/search and full message bodies after Connect Google in the web UI or `python main.py --connect google` (OAuth, not an AI key) |
 | Calendar | Today's / tomorrow's / this week's Google Calendar agenda after the same Google login |
 | MCP tools | Local stdio servers from `mcp.json` or the localhost UI MCP editor (no extra AI key) |
-| Web UI | `python main.py --serve` on 127.0.0.1 (paste the AI key in the sidebar or use `.env`; Connect Google there too; chat streams live; refresh restores recent turns) |
+| Web UI | `python main.py --serve` on 127.0.0.1 (paste the AI key or Google OAuth client ID in the sidebar or use `.env`; Connect Google there too; chat streams live; refresh restores recent turns) |
 
 ## MCP connections
 
@@ -168,13 +168,13 @@ Gmail and Google Calendar are optional. They use **OAuth**, not a second AI vend
 1. In [Google Cloud Console](https://console.cloud.google.com/) create a project (or reuse one).
 2. Enable **Gmail API** and **Google Calendar API**.
 3. Create an OAuth client ID of type **Desktop app**.
-4. Put the client id in `.env`:
+4. Paste the client id in the localhost UI sidebar (**Save Google client**) — no `.env` edit and no restart — or put it in `.env`:
 
 ```
 GOOGLE_OAUTH_CLIENT_ID=....apps.googleusercontent.com
 ```
 
-Web clients may also set `GOOGLE_OAUTH_CLIENT_SECRET`. Then connect from either place:
+Web clients may also paste an optional `GOOGLE_OAUTH_CLIENT_SECRET` (or set it in `.env`). Then connect from either place:
 
 ```bash
 python main.py --serve --open
@@ -198,7 +198,7 @@ python main.py --once "What's on my calendar today?"
 python main.py --disconnect google
 ```
 
-`--auth`, `--connect`, `--disconnect`, and Connect Google in the web UI do not need an AI API key. If Google is not connected, the Mail and Calendar agents tell you to connect instead of failing the rest of Jarvis.
+`--auth`, `--connect`, `--disconnect`, pasting a Google OAuth client ID, and Connect Google in the web UI do not need an AI API key. If Google is not connected, the Mail and Calendar agents tell you to connect instead of failing the rest of Jarvis.
 
 Override the token file with `JARVIS_AUTH_PATH` or `JARVIS_HOME`. The file is gitignored.
 
@@ -210,11 +210,11 @@ The REPL is optional. Start the UI even before you have a key:
 python main.py --serve --open
 ```
 
-Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. **Paste one AI key** there to unlock chat without editing `.env` or restarting. **Remember facts, schedule automations, and connect MCP servers** in that same sidebar — no chat phrasing and no extra API key. **Connect Google** and **Disconnect** live there too — same OAuth as `--connect google`. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar, MCP tools. **Replies stream into the chat log** (planning, specialist steps, then tokens) so Send is not frozen. **Refresh restores recent conversation** from local memory — the same turns the REPL already kept. **Due reminders appear in the chat log on their own** while `--serve` is running; you do not need to send a message or set up system cron for that.
+Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. **Paste one AI key** there to unlock chat without editing `.env` or restarting. **Paste a Google OAuth client ID** in the Auth sidebar the same way, then **Connect Google** — no `.env` edit and no restart. **Remember facts, schedule automations, and connect MCP servers** in that same sidebar — no chat phrasing and no extra API key. **Connect Google** and **Disconnect** live there too — same OAuth as `--connect google`. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar, MCP tools. **Replies stream into the chat log** (planning, specialist steps, then tokens) so Send is not frozen. **Refresh restores recent conversation** from local memory — the same turns the REPL already kept. **Due reminders appear in the chat log on their own** while `--serve` is running; you do not need to send a message or set up system cron for that.
 
 - No extra API key and no cloud UI vendor
 - Binds to loopback so the assistant is not on your LAN
-- Works without a key too: paste a Gemini / OpenAI / Anthropic key in the sidebar (saved to local `.env`), remember facts, schedule reminders, add MCP servers, or keep chat paused and still connect Google
+- Works without a key too: paste a Gemini / OpenAI / Anthropic key in the sidebar (saved to local `.env`), paste a Google OAuth client ID, remember facts, schedule reminders, add MCP servers, or keep chat paused and still connect Google
 - Status/health are JSON at `/api/status` and `/api/health` (including optional LLM fallbacks)
 - Chat is `POST /api/chat` (full reply) or `POST /api/chat/stream` (SSE: status, specialist steps, tokens, due jobs)
 - Recent conversation is JSON at `GET /api/chat/history` (restored into the chat log on refresh; no extra API key)
@@ -223,6 +223,7 @@ Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / 
 - MCP servers are JSON at `/api/mcp` (`POST` to add/update, `/remove`, `/disable`, `/enable`, `/reload`)
 - Due automations are JSON at `/api/due` (consumed by the page poll)
 - Saving a key is `POST /api/key` on localhost only — the key is never returned in API responses
+- Saving a Google OAuth client ID is `POST /api/auth/google/config` on localhost only — the client ID and secret are never returned in API responses
 - Google OAuth callback is `/oauth/google/callback` on the same localhost server
 
 ## Development
@@ -247,7 +248,7 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 - `src/memory/` — local persistent facts and recent turns
 - `src/orchestrator.py` — routes a request, loops specialists, then answers
 - `src/tools/` — weather, time, research, memory, automation, computer, mail, calendar, MCP adapters
-- `src/ui/` — localhost web chat UI (`--serve`; streaming replies; restored history; background automation ticker; memory, automation, and MCP editors)
+- `src/ui/` — localhost web UI (`--serve`; streaming replies; restored history; background automation ticker; memory, automation, and MCP editors; paste AI key or Google OAuth client ID)
 - `tests/` — unit tests that do not need live API keys
 
 ## Roadmap
@@ -272,5 +273,6 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 16. ~~Read full Gmail bodies and calendar today/tomorrow/week windows~~ (same Google OAuth; still readonly)
 17. ~~Streaming replies in the localhost UI~~ (SSE over the same one AI key; tool steps stay visible)
 18. ~~Restore chat history in the localhost UI on refresh~~ (same `memory.json` turns as the REPL; no extra key)
-19. Desktop / JS-capable computer use (Playwright or screenshot+input)
-20. Microsoft / Outlook OAuth using the same auth store
+19. ~~Paste a Google OAuth client ID from the localhost UI~~ (no `.env` edit, no restart; still not a second AI key)
+20. Desktop / JS-capable computer use (Playwright or screenshot+input)
+21. Microsoft / Outlook OAuth using the same auth store
