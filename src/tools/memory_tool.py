@@ -8,6 +8,23 @@ from src.tools.base_tool import Tool
 _REMEMBER = frozenset({"remember", "save", "store", "add", "note"})
 _RECALL = frozenset({"recall", "list", "show", "get", "search", "what"})
 _FORGET = frozenset({"forget", "delete", "remove", "drop"})
+_CLEAR = frozenset({"clear", "reset", "wipe"})
+_CONVERSATION_TARGETS = frozenset(
+    {
+        "conversation",
+        "chat",
+        "history",
+        "turns",
+        "chat history",
+        "conversation history",
+        "the conversation",
+        "the chat",
+        "the history",
+        "recent conversation",
+        "recent chat",
+        "recent history",
+    }
+)
 
 
 class MemoryTool(Tool):
@@ -18,12 +35,13 @@ class MemoryTool(Tool):
         return "memory"
 
     def aliases(self):
-        return ("remember", "recall", "forget")
+        return ("remember", "recall", "forget", "clear")
 
     def description(self) -> str:
         return (
             "Persist personal facts and preferences across sessions. "
-            "Args: remember <fact>, recall [query], forget <query or id>, or list. "
+            "Args: remember <fact>, recall [query], forget <query or id>, "
+            "clear conversation (chat turns only — facts stay), or list. "
             "No extra API key — stored locally."
         )
 
@@ -31,12 +49,15 @@ class MemoryTool(Tool):
         action, payload = _parse_args(args)
         if action in _REMEMBER:
             return self.store.remember(payload)
+        if action in _CLEAR or (action in _FORGET and _is_conversation_target(payload)):
+            return self.store.clear_turns()
         if action in _FORGET:
             return self.store.forget(payload)
         if action in _RECALL:
             return self.store.recall(payload or None)
         return (
-            "Use memory with remember <fact>, recall [query], forget <query>, or list."
+            "Use memory with remember <fact>, recall [query], forget <query>, "
+            "clear conversation, or list."
         )
 
 
@@ -72,6 +93,11 @@ def _split_command(text: str) -> tuple[str, str]:
         return "recall", ""
     first, _, rest = text.partition(" ")
     verb = first.strip().lower().rstrip(":")
-    if verb in _REMEMBER | _RECALL | _FORGET:
+    if verb in _REMEMBER | _RECALL | _FORGET | _CLEAR:
         return verb, rest.strip()
     return "remember", text
+
+
+def _is_conversation_target(text: str) -> bool:
+    needle = " ".join(str(text or "").lower().split())
+    return needle in _CONVERSATION_TARGETS

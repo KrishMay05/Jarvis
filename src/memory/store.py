@@ -206,6 +206,18 @@ class MemoryStore:
         self.turns = self.turns[-_MAX_TURNS:]
         self.save()
 
+    def clear_turns(self) -> str:
+        """Drop recent conversation turns. Durable facts stay on disk."""
+        count = len(self.turns)
+        if count == 0:
+            return "Conversation is already empty. Remembered facts were not changed."
+        self.turns = []
+        self.save()
+        return (
+            f"Cleared {count} conversation turn(s). "
+            "Remembered facts are still here."
+        )
+
     def prompt_context(self, *, max_facts: int = 20, max_turns: int = 8) -> str:
         """Compact block for LLM prompts. Empty string when nothing is stored."""
         sections: list[str] = []

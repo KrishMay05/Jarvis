@@ -71,7 +71,7 @@ class AgentOrchestrator:
 
                 ###Guidelines###
                 - Prefer a specialist (weather, time, research, memory, automations, computer, mail, calendar, MCP) when the user needs that capability.
-                - Use the Memory Agent to remember, forget, or recall lasting personal facts. Also use it when the user states a new lasting fact (name, home city, units, preferences).
+                - Use the Memory Agent to remember, forget, or recall lasting personal facts. Also use it when the user states a new lasting fact (name, home city, units, preferences). Use it to clear conversation / forget the chat when they want a fresh thread — that must not delete durable facts.
                 - Use the Automation Agent to schedule reminders, recurring research/weather prompts, list jobs, or cancel them. Phrases like remind me, every morning, daily at 8am, or cancel reminder belong here.
                 - Use the Computer Agent to open a public URL, read a web page, list links, or follow a link. Phrases like open, browse, go to, visit, what's on this page, or a pasted http(s) URL belong here. If the user names a site without a scheme (python.org), rewrite the input with https://. Private/local addresses cannot be opened.
                 - Use the Mail Agent for inbox, unread mail, searching email, or reading a specific message body. Google must already be connected (web UI Connect Google, or python main.py --connect google). This is OAuth, not a second AI key.
@@ -252,6 +252,15 @@ class AgentOrchestrator:
         if self.memory_store is not None:
             self.memory_store.record_exchange(user_input, reply)
         yield {"type": "done", "reply": reply}
+
+    def clear_conversation(self) -> str:
+        """Drop recent turns and in-process planner memory. Facts stay."""
+        self.memory.clear()
+        if self.memory_store is not None:
+            clearer = getattr(self.memory_store, "clear_turns", None)
+            if callable(clearer):
+                return clearer()
+        return "Conversation is already empty. Remembered facts were not changed."
 
     def drain_due_automations(self, now=None) -> list[str]:
         """Fire due reminders and run-jobs. Safe to call between REPL turns."""

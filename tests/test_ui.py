@@ -29,6 +29,12 @@ class FakeOrchestrator:
             self.memory_store.record_exchange(text, reply)
         return reply
 
+    def clear_conversation(self) -> str:
+        self.memory.clear()
+        if self.memory_store is not None:
+            return self.memory_store.clear_turns()
+        return "Conversation is already empty. Remembered facts were not changed."
+
     def drain_due_automations(self, now=None):
         if self.automation_store is not None:
             from src.automation.runner import run_due_jobs
@@ -49,7 +55,10 @@ def test_index_is_self_contained_html():
     assert "/api/chat" in html
     assert "/api/chat/stream" in html
     assert "/api/chat/history" in html
+    assert "/api/chat/history/clear" in html
     assert "loadChatHistory" in html
+    assert "clearChatHistory" in html
+    assert "Clear conversation" in html
     assert "Restored recent conversation" in html
     assert "event-stream" in html
     assert "Replies stream" in html
@@ -220,6 +229,7 @@ def test_describe_runtime_mentions_web_ui(monkeypatch):
     assert "paste an AI key" in text
     assert "Google OAuth client ID" in text
     assert "restored history" in text
+    assert "clear conversation" in text
     assert "memory/automations/MCP" in text
     assert "Connect Google" in text
 
@@ -983,6 +993,8 @@ def test_chat_history_works_without_ai_key():
     html = app.dispatch("GET", "/").body.decode("utf-8")
     assert "/api/chat/history" in html
     assert "loadChatHistory" in html
+    assert "/api/chat/history/clear" in html
+    assert "Clear conversation" in html
 
 
 def test_chat_history_uses_orchestrator_store_and_records_new_turns():
@@ -1027,9 +1039,75 @@ def test_http_chat_history_roundtrip():
             html = resp.read().decode()
         assert "loadChatHistory" in html
         assert "Restored recent conversation" in html
+        req = Request(
+            f"http://127.0.0.1:{port}/api/chat/history/clear",
+            data=b"{}",
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(req, timeout=5) as resp:
+            cleared = json.loads(resp.read())
+        assert cleared["ok"] is True
+        assert cleared["turns"] == []
+        with urlopen(f"http://127.0.0.1:{port}/api/chat/history", timeout=5) as resp:
+            after = json.loads(resp.read())
+        assert after["turns"] == []
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_chat_history_clear_works_without_ai_key():
+    store = MemoryStore()
+    store.remember("Lives in Austin")
+    store.record_exchange("What time is it?", "It is noon in Austin.")
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    cleared = app.dispatch("POST", "/api/chat/history/clear", b"{}")
+    payload = json.loads(cleared.body)
+    assert cleared.status == 200
+    assert payload["ok"] is True
+    assert payload["turns"] == []
+    assert "Cleared" in payload["message"]
+    history = json.loads(app.dispatch("GET", "/api/chat/history").body)
+    assert history["turns"] == []
+    facts = json.loads(app.dispatch("GET", "/api/memory").body)
+    assert facts["facts"][0]["text"] == "Lives in Austin"
+    again = json.loads(app.dispatch("POST", "/api/chat/history/clear", b"{}").body)
+    assert again["ok"] is True
+    assert "already empty" in again["message"]
+
+
+def test_chat_history_clear_resets_orchestrator_memory():
+    memory = MemoryStore()
+    memory.remember("Prefers Celsius")
+    memory.record_exchange("hi", "hello")
+    orch = FakeOrchestrator()
+    orch.memory_store = memory
+    orch.memory = ["User: hi", "Orchestrator: leftover"]
+    app = JarvisWebApp(
+        orchestrator=orch,
+        settings=LLMSettings(provider="openai", api_key="sk-test", model="gpt-4o-mini"),
+    )
+    cleared = app.dispatch("POST", "/api/chat/history/clear", b"{}")
+    payload = json.loads(cleared.body)
+    assert cleared.status == 200
+    assert payload["turns"] == []
+    assert orch.memory == []
+    assert memory.facts[0].text == "Prefers Celsius"
+    assert memory.turns == []
+
+
+def test_chat_history_clear_refuses_non_loopback():
+    store = MemoryStore()
+    store.record_exchange("secret chat", "still here")
+    app = JarvisWebApp(
+        missing_key="No AI API key found.",
+        public_base="http://192.168.1.20:8787",
+    )
+    blocked = app.dispatch("POST", "/api/chat/history/clear", b"{}")
+    assert blocked.status == 403
+    history = json.loads(app.dispatch("GET", "/api/chat/history").body)
+    assert history["turns"][0]["text"] == "secret chat"
 
 
 def test_memory_crud_works_without_ai_key():
@@ -1165,6 +1243,8 @@ def test_memory_and_automation_writes_refuse_non_loopback():
         json.dumps({"text": "secret fact"}).encode(),
     )
     assert memory.status == 403
+    cleared = app.dispatch("POST", "/api/chat/history/clear", b"{}")
+    assert cleared.status == 403
     job = app.dispatch(
         "POST",
         "/api/automations",

@@ -124,6 +124,8 @@ class JarvisWebApp:
             return _json(200, {"due": self.take_due()})
         if verb == "GET" and route == "/api/chat/history":
             return _json(200, self._chat_history_payload())
+        if verb == "POST" and route == "/api/chat/history/clear":
+            return self._clear_chat_history()
         if verb == "GET" and route == "/api/mcp":
             return _json(200, self._mcp_payload())
         if verb == "POST" and route == "/api/chat":
@@ -282,6 +284,28 @@ class JarvisWebApp:
             "turns": [turn.to_dict() for turn in store.list_turns()],
             "status": store.status_line(),
         }
+
+    def _clear_chat_history(self) -> UiResponse:
+        """Drop restored chat turns. Facts stay. Localhost only — no AI key."""
+        blocked = self._refuse_remote_writes()
+        if blocked is not None:
+            return blocked
+        with self._lock:
+            orch = self.orchestrator
+            if orch is not None:
+                clearer = getattr(orch, "clear_conversation", None)
+                if callable(clearer):
+                    message = clearer()
+                else:
+                    memory = getattr(orch, "memory", None)
+                    if isinstance(memory, list):
+                        memory.clear()
+                    message = self._memory_store().clear_turns()
+            else:
+                message = self._memory_store().clear_turns()
+        data = self._chat_history_payload()
+        data.update({"ok": True, "message": message})
+        return _json(200, data)
 
     def _automations_payload(self) -> dict:
         store = self._automation_store()
@@ -968,6 +992,7 @@ def serve(
         f"(every {int(app.tick_seconds)}s) — no extra cron. "
         "Chat replies stream live — no extra API key. "
         "Refreshing the page restores recent conversation from local memory. "
+        "Clear conversation in the page when you want a fresh thread — facts stay. "
         "Only localhost can connect. Ctrl+C to stop.",
         flush=True,
     )
