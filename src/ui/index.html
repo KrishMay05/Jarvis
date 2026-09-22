@@ -113,8 +113,14 @@
       }
       .chat {
         display: grid;
-        grid-template-rows: 1fr auto;
+        grid-template-rows: 1fr auto auto auto;
       }
+      .chat-bar {
+        display: flex;
+        justify-content: flex-end;
+        padding: 0 14px 8px;
+      }
+      .chat-bar button { min-height: 32px; }
       #log {
         overflow: auto;
         padding: 22px 22px 8px;
@@ -320,11 +326,14 @@
         </aside>
         <section class="chat">
           <div id="log"></div>
+          <div class="chat-bar">
+            <button type="button" id="clear-chat" class="ghost">Clear conversation</button>
+          </div>
           <form id="composer">
             <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox, today's calendar, MCP tools"></textarea>
             <button id="send" type="submit">Send</button>
           </form>
-          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. Replies stream as Jarvis works (tool steps, then the answer). Refreshing this page restores recent conversation from local memory (same file as the REPL — no extra API key). Remember facts, schedule automations, and connect MCP servers here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Paste a Google OAuth client ID here, then Connect Google for mail and calendar — OAuth, not a second AI key, and no restart.</div>
+          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. Replies stream as Jarvis works (tool steps, then the answer). Refreshing this page restores recent conversation from local memory (same file as the REPL — no extra API key). Clear conversation when you want a fresh thread — remembered facts stay (no extra API key). Remember facts, schedule automations, and connect MCP servers here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Paste a Google OAuth client ID here, then Connect Google for mail and calendar — OAuth, not a second AI key, and no restart.</div>
         </section>
       </div>
     </div>
@@ -343,6 +352,7 @@
       const googleClientId = document.getElementById("google-client-id");
       const googleClientSecret = document.getElementById("google-client-secret");
       const saveGoogle = document.getElementById("save-google-oauth");
+      const clearChat = document.getElementById("clear-chat");
       let ready = false;
 
       function add(text, cls) {
@@ -433,7 +443,7 @@
         });
         if (!log.childElementCount) {
           if (ready) {
-            add("At your service. Weather, research, memory, automations, computer use, mail, calendar, and MCP — one AI key. Replies stream here as I work. Refresh to restore this conversation from local memory. Remember facts, schedule reminders, and connect MCP servers in the sidebar without chatting. Reminders fire here while the page is open. Paste a Google OAuth client ID in the sidebar, then Connect Google when you want inbox, full email bodies, and today's calendar.", "jarvis");
+            add("At your service. Weather, research, memory, automations, computer use, mail, calendar, and MCP — one AI key. Replies stream here as I work. Refresh to restore this conversation from local memory. Clear conversation for a fresh thread — remembered facts stay. Remember facts, schedule reminders, and connect MCP servers in the sidebar without chatting. Reminders fire here while the page is open. Paste a Google OAuth client ID in the sidebar, then Connect Google when you want inbox, full email bodies, and today's calendar.", "jarvis");
           } else {
             add(data.error || "Paste one AI API key in the sidebar. No .env edit and no restart.", "system");
             add("You can still remember facts, schedule reminders, connect MCP servers, and connect Google without an AI key.", "system");
@@ -919,6 +929,29 @@
         }
         refreshStatus();
       });
+
+      async function clearChatHistory() {
+        if (!window.confirm("Clear the chat log? Remembered facts stay. This cannot be undone.")) {
+          return;
+        }
+        clearChat.disabled = true;
+        try {
+          const { res, data } = await postJson("/api/chat/history/clear", {});
+          if (!res.ok) {
+            add(data.error || "Could not clear conversation.", "system");
+            return;
+          }
+          log.replaceChildren();
+          add(data.message || "Conversation cleared. Remembered facts are still here.", "system");
+        } catch (err) {
+          add("Could not reach the local Jarvis server.", "system");
+        } finally {
+          clearChat.disabled = false;
+        }
+        await refreshStatus();
+      }
+
+      clearChat.addEventListener("click", clearChatHistory);
 
       prompt.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && !event.shiftKey) {

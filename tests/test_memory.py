@@ -92,6 +92,23 @@ def test_list_turns_returns_a_copy(tmp_path):
     assert len(store.turns) == 2
 
 
+def test_clear_turns_keeps_facts(tmp_path):
+    path = tmp_path / "memory.json"
+    store = MemoryStore(path)
+    store.remember("Lives in Austin")
+    store.record_exchange("hello", "At your service.")
+    message = store.clear_turns()
+    assert "Cleared 2 conversation turn" in message
+    assert store.turns == []
+    assert store.facts[0].text == "Lives in Austin"
+    assert "hello" not in store.prompt_context()
+    assert "Austin" in store.prompt_context()
+    reloaded = MemoryStore(path)
+    assert reloaded.turns == []
+    assert reloaded.facts[0].text == "Lives in Austin"
+    assert "already empty" in store.clear_turns()
+
+
 def test_memory_tool_parses_phrases_and_dicts(tmp_path):
     tool = MemoryTool(MemoryStore(tmp_path / "memory.json"))
     assert "Remembered" in tool.use("I drink tea in the morning")
@@ -100,8 +117,23 @@ def test_memory_tool_parses_phrases_and_dicts(tmp_path):
     assert "No durable memories" in tool.use({"action": "list"})
 
 
+def test_memory_tool_clears_conversation_without_forgetting_facts(tmp_path):
+    store = MemoryStore(tmp_path / "memory.json")
+    tool = MemoryTool(store)
+    assert "Remembered" in tool.use("Lives in Austin")
+    store.record_exchange("what is the weather", "Sunny in Austin.")
+    assert "Cleared" in tool.use("clear conversation")
+    assert store.turns == []
+    assert store.facts[0].text == "Lives in Austin"
+    store.record_exchange("hello again", "Welcome back.")
+    assert "Cleared" in tool.use({"action": "forget", "query": "the chat"})
+    assert store.turns == []
+    assert "Austin" in tool.use("recall")
+
+
 def test_memory_tool_aliases_include_remember():
     assert "remember" in MemoryTool().aliases()
+    assert "clear" in MemoryTool().aliases()
 
 
 def test_status_line_reports_empty_and_counts(tmp_path):
@@ -128,6 +160,11 @@ def test_orchestrator_records_exchanges(tmp_path, monkeypatch):
     assert orchestrator.handle_message("hello") == "At your service."
     assert [turn.role for turn in store.turns] == ["user", "assistant"]
     assert store.turns[0].text == "hello"
+    orchestrator.memory.append("leftover planner step")
+    assert "Cleared" in orchestrator.clear_conversation()
+    assert orchestrator.memory == []
+    assert store.turns == []
+    assert store.facts == []
 
 
 def test_orchestrator_prompt_includes_durable_facts(tmp_path, monkeypatch):

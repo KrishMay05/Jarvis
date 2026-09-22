@@ -56,9 +56,12 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
         Name="Memory Agent",
         Description=(
             "Remembers, recalls, and forgets personal facts and preferences "
-            "across sessions (name, home city, units, habits). Use when the "
-            "user says remember/forget, shares a lasting fact, or asks what "
-            "you know about them. Local file only — no extra API key."
+            "across sessions (name, home city, units, habits). Also clears "
+            "recent conversation turns (clear conversation / forget the chat) "
+            "without deleting durable facts. Use when the user says "
+            "remember/forget, shares a lasting fact, asks what you know "
+            "about them, or wants a fresh chat thread. Local file only — "
+            "no extra API key."
         ),
         Tools=[MemoryTool(memory)],
         Model=model,
