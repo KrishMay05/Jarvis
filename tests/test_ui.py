@@ -72,9 +72,11 @@ def test_index_is_self_contained_html():
     assert "Fires in the background" in html
     assert "pollDue" in html
     assert "/api/key" in html
+    assert "/api/key/backup" in html
     assert "/api/auth/google/config" in html
     assert "Connect Google" in html
     assert "Save key" in html
+    assert "Save backup" in html
     assert "Save Google client" in html
     assert "Paste Gemini" in html
     assert "Desktop OAuth client ID" in html
@@ -98,6 +100,7 @@ def test_status_without_key_is_not_ready():
     assert payload["google"]["connected"] is False
     assert "localhost" in payload["bind"]
     assert payload["can_install_key"] is True
+    assert payload["can_install_backup"] is False
     assert payload["can_install_google"] is True
     assert payload["google"]["has_secret"] is False
     assert payload["scheduler"]["running"] is False
@@ -117,6 +120,7 @@ def test_status_with_settings_lists_llm():
     assert payload["ready"] is True
     assert payload["llm"]["provider"] == "gemini"
     assert payload["llm"]["fallbacks"] == []
+    assert payload["can_install_backup"] is True
     assert "web UI" in payload["runtime"]
 
 
@@ -227,6 +231,7 @@ def test_describe_runtime_mentions_web_ui(monkeypatch):
     assert "web UI" in text
     assert "--serve" in text
     assert "paste an AI key" in text
+    assert "optional backup key" in text
     assert "Google OAuth client ID" in text
     assert "restored history" in text
     assert "clear conversation" in text
@@ -534,6 +539,156 @@ def test_install_key_unlocks_chat_without_restart(tmp_path):
     chat = app.dispatch("POST", "/api/chat", json.dumps({"message": "hello"}).encode())
     assert chat.status == 200
     assert json.loads(chat.body)["reply"] == "heard:hello"
+
+
+BACKUP_KEY = "AIzaSyUiBackupKey99xx"
+
+
+def test_install_backup_key_keeps_primary_without_restart(tmp_path, monkeypatch):
+    for var in (
+        "JARVIS_LLM_PROVIDER",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "JARVIS_API_KEY",
+        "OPENAI_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    env_path = tmp_path / "primary-and-backup.env"
+    built: list[LLMSettings] = []
+
+    def factory(settings: LLMSettings):
+        built.append(settings)
+        return FakeOrchestrator()
+
+    app = JarvisWebApp(
+        missing_key="No AI API key found.",
+        orchestrator_factory=factory,
+        env_path=env_path,
+    )
+    primary = app.dispatch(
+        "POST",
+        "/api/key",
+        json.dumps({"api_key": PASTE_KEY, "provider": "openai"}).encode(),
+    )
+    assert primary.status == 200
+    orch = app.orchestrator
+    response = app.dispatch(
+        "POST",
+        "/api/key/backup",
+        json.dumps({"api_key": BACKUP_KEY, "provider": "gemini"}).encode(),
+    )
+    payload = json.loads(response.body)
+    assert response.status == 200
+    assert payload["ok"] is True
+    assert payload["ready"] is True
+    assert payload["llm"]["provider"] == "openai"
+    assert payload["llm"]["fallbacks"] == [
+        {"provider": "gemini", "model": "gemini-2.0-flash", "summary": "gemini (gemini-2.0-flash)"}
+    ]
+    assert BACKUP_KEY not in response.body.decode()
+    assert BACKUP_KEY not in json.dumps(payload)
+    assert PASTE_KEY not in json.dumps(payload)
+    assert "no restart" in payload["message"].lower()
+    assert "backup ready" in payload["message"].lower()
+    assert app.orchestrator is orch
+    assert len(built) == 1
+    saved = env_path.read_text(encoding="utf-8")
+    assert f"OPENAI_API_KEY={PASTE_KEY}" in saved
+    assert f"GEMINI_API_KEY={BACKUP_KEY}" in saved
+    assert "JARVIS_LLM_PROVIDER=openai" in saved
+
+    status = json.loads(app.dispatch("GET", "/api/status").body)
+    assert status["ready"] is True
+    assert status["can_install_backup"] is True
+    assert status["llm"]["provider"] == "openai"
+    assert status["llm"]["fallbacks"][0]["provider"] == "gemini"
+    assert BACKUP_KEY not in json.dumps(status)
+
+
+def test_install_backup_key_requires_primary():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    response = app.dispatch(
+        "POST",
+        "/api/key/backup",
+        json.dumps({"api_key": BACKUP_KEY, "provider": "gemini"}).encode(),
+    )
+    payload = json.loads(response.body)
+    assert response.status == 400
+    assert "primary" in payload["error"].lower()
+    assert app.ready is False
+    assert json.loads(app.dispatch("GET", "/api/status").body)["can_install_backup"] is False
+
+
+def test_install_backup_key_rejects_same_provider(tmp_path, monkeypatch):
+    for var in (
+        "JARVIS_LLM_PROVIDER",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "JARVIS_API_KEY",
+        "OPENAI_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    app = JarvisWebApp(
+        missing_key="No AI API key found.",
+        orchestrator_factory=lambda settings: FakeOrchestrator(),
+        env_path=tmp_path / "same.env",
+    )
+    app.dispatch(
+        "POST",
+        "/api/key",
+        json.dumps({"api_key": PASTE_KEY, "provider": "openai"}).encode(),
+    )
+    response = app.dispatch(
+        "POST",
+        "/api/key/backup",
+        json.dumps({"api_key": "sk-openai-also-a-backup", "provider": "auto"}).encode(),
+    )
+    payload = json.loads(response.body)
+    assert response.status == 400
+    assert "different provider" in payload["error"]
+    status = json.loads(app.dispatch("GET", "/api/status").body)
+    assert status["llm"]["provider"] == "openai"
+    assert status["llm"]["fallbacks"] == []
+
+
+def test_install_backup_key_rejects_empty_and_placeholder(tmp_path):
+    app = JarvisWebApp(
+        missing_key="No AI API key found.",
+        orchestrator_factory=lambda settings: FakeOrchestrator(),
+        env_path=tmp_path / "empty-backup.env",
+    )
+    app.dispatch(
+        "POST",
+        "/api/key",
+        json.dumps({"api_key": PASTE_KEY, "provider": "openai"}).encode(),
+    )
+    empty = app.dispatch("POST", "/api/key/backup", b'{"api_key":"   "}')
+    assert empty.status == 400
+    assert "Paste an AI API key" in json.loads(empty.body)["error"]
+    placeholder = app.dispatch(
+        "POST", "/api/key/backup", b'{"api_key":"your-gemini-key"}'
+    )
+    assert placeholder.status == 400
+    bad = app.dispatch("POST", "/api/key/backup", b"not-json")
+    assert bad.status == 400
+
+
+def test_install_backup_key_refuses_non_loopback_bind():
+    app = JarvisWebApp(
+        orchestrator=FakeOrchestrator(),
+        settings=LLMSettings(provider="openai", api_key=PASTE_KEY, model="gpt-4o-mini"),
+        public_base="http://192.168.1.20:8787",
+    )
+    response = app.dispatch(
+        "POST",
+        "/api/key/backup",
+        json.dumps({"api_key": BACKUP_KEY}).encode(),
+    )
+    payload = json.loads(response.body)
+    assert response.status == 403
+    assert "localhost" in payload["error"]
 
 
 def test_install_key_rejects_empty_and_placeholder():

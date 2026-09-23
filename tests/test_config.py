@@ -7,12 +7,14 @@ from src.config import (
     InvalidAPIKeyError,
     InvalidGoogleClientError,
     MissingAPIKeyError,
+    apply_backup_llm_key,
     apply_llm_key,
     apply_google_oauth_config,
     describe_runtime,
     env_file_path,
     get_llm_settings,
     infer_provider,
+    install_backup_llm_key,
     install_google_oauth_config,
     install_llm_key,
     list_llm_settings,
@@ -122,6 +124,7 @@ def test_describe_runtime_mentions_one_key_tools(monkeypatch):
     assert "calendar" in text.lower()
     assert "web ui" in text.lower()
     assert "paste" in text.lower()
+    assert "optional backup key" in text.lower()
     assert "none required" in text.lower()
     assert "MCP:" in text
     assert "Memory:" in text
@@ -216,6 +219,65 @@ def test_install_llm_key_uses_jarvis_env_path(tmp_path, monkeypatch):
     assert settings.provider == "gemini"
     assert target.exists()
     assert "GEMINI_API_KEY=AIzaSyInstallKey99" in target.read_text(encoding="utf-8")
+
+
+def test_apply_backup_llm_key_keeps_primary_and_pins_provider(monkeypatch):
+    for var in (
+        "JARVIS_LLM_PROVIDER",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "JARVIS_API_KEY",
+        "JARVIS_MODEL",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-primary-key")
+
+    backup = apply_backup_llm_key("AIzaSyBackupGemini99", "auto")
+    assert backup.provider == "gemini"
+    assert backup.api_key == "AIzaSyBackupGemini99"
+    assert os.environ["GEMINI_API_KEY"] == "AIzaSyBackupGemini99"
+    assert os.environ["JARVIS_LLM_PROVIDER"] == "openai"
+    configured = list_llm_settings()
+    assert [item.provider for item in configured] == ["openai", "gemini"]
+    assert get_llm_settings().provider == "openai"
+    assert get_llm_settings().api_key == "sk-openai-primary-key"
+
+
+def test_apply_backup_llm_key_rejects_same_provider(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-primary-key")
+    monkeypatch.setenv("JARVIS_LLM_PROVIDER", "openai")
+    with pytest.raises(InvalidAPIKeyError, match="different provider"):
+        apply_backup_llm_key("sk-openai-also-a-backup", "auto")
+
+
+def test_install_backup_llm_key_uses_jarvis_env_path(tmp_path, monkeypatch):
+    target = tmp_path / "backup.env"
+    monkeypatch.setenv("JARVIS_ENV_PATH", str(target))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-primary-key")
+    monkeypatch.delenv("JARVIS_LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    backup = install_backup_llm_key("AIzaSyInstallBackup9")
+    assert backup.provider == "gemini"
+    text = target.read_text(encoding="utf-8")
+    assert "GEMINI_API_KEY=AIzaSyInstallBackup9" in text
+    assert "JARVIS_LLM_PROVIDER=openai" in text
+    mode = stat.S_IMODE(target.stat().st_mode)
+    assert mode == 0o600
+
+
+def test_install_backup_llm_key_requires_primary(monkeypatch):
+    for var in (
+        "JARVIS_LLM_PROVIDER",
+        "JARVIS_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    with pytest.raises(MissingAPIKeyError, match="No AI API key found"):
+        install_backup_llm_key("AIzaSyNoPrimaryYet9")
 
 
 def test_normalize_rejects_placeholder_and_short_keys():

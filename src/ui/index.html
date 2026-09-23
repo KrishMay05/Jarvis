@@ -277,6 +277,17 @@
             <button type="submit" id="save-key" class="secondary">Save key</button>
           </form>
           <p id="key-hint" class="meta">Saved on this machine in .env (gitignored). Not a second vendor — this is the one AI key.</p>
+          <form id="backup-form" class="key-form">
+            <select id="backup-provider" aria-label="Backup AI provider">
+              <option value="auto">Auto-detect backup provider</option>
+              <option value="gemini">Gemini backup</option>
+              <option value="openai">OpenAI backup</option>
+              <option value="anthropic">Anthropic backup</option>
+            </select>
+            <input id="backup-key" type="password" autocomplete="off" spellcheck="false" placeholder="Optional second Gemini / OpenAI / Anthropic key" />
+            <button type="submit" id="save-backup" class="secondary">Save backup</button>
+          </form>
+          <p id="backup-hint" class="meta">Optional. Used only if the primary LLM is down or rate-limited. Different provider than the primary. No .env edit.</p>
           <h2>Tools</h2>
           <div id="tools" class="tools"></div>
           <h2>Memory</h2>
@@ -333,7 +344,7 @@
             <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox, today's calendar, MCP tools"></textarea>
             <button id="send" type="submit">Send</button>
           </form>
-          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. Replies stream as Jarvis works (tool steps, then the answer). Refreshing this page restores recent conversation from local memory (same file as the REPL — no extra API key). Clear conversation when you want a fresh thread — remembered facts stay (no extra API key). Remember facts, schedule automations, and connect MCP servers here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails. Paste a Google OAuth client ID here, then Connect Google for mail and calendar — OAuth, not a second AI key, and no restart.</div>
+          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails — paste it here too, still no .env edit. Replies stream as Jarvis works (tool steps, then the answer). Refreshing this page restores recent conversation from local memory (same file as the REPL — no extra API key). Clear conversation when you want a fresh thread — remembered facts stay (no extra API key). Remember facts, schedule automations, and connect MCP servers here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). Paste a Google OAuth client ID here, then Connect Google for mail and calendar — OAuth, not a second AI key, and no restart.</div>
         </section>
       </div>
     </div>
@@ -348,6 +359,10 @@
       const keyInput = document.getElementById("api-key");
       const keyProvider = document.getElementById("key-provider");
       const saveKey = document.getElementById("save-key");
+      const backupForm = document.getElementById("backup-form");
+      const backupInput = document.getElementById("backup-key");
+      const backupProvider = document.getElementById("backup-provider");
+      const saveBackup = document.getElementById("save-backup");
       const googleForm = document.getElementById("google-config-form");
       const googleClientId = document.getElementById("google-client-id");
       const googleClientSecret = document.getElementById("google-client-secret");
@@ -424,6 +439,7 @@
         document.getElementById("mcp").textContent = data.mcp || "";
         renderMcp(data.mcp_servers || []);
         const keyStatus = document.getElementById("key-status");
+        const backupHint = document.getElementById("backup-hint");
         if (ready) {
           keyStatus.textContent = (data.llm && data.llm.summary)
             ? ("Using " + data.llm.summary + ". Paste another key to switch.")
@@ -431,7 +447,15 @@
         } else {
           keyStatus.textContent = "Drop in one Gemini, OpenAI, or Anthropic key. Saved locally — no restart.";
         }
+        if (!ready) {
+          backupHint.textContent = "Save a primary key first. A backup is optional and must be a different provider.";
+        } else if (fallbacks.length) {
+          backupHint.textContent = "Backup ready: " + fallbacks.map((item) => item.summary).join(", ") + ". Paste another to replace that provider. Used only if the primary fails.";
+        } else {
+          backupHint.textContent = "Optional. Used only if the primary LLM is down or rate-limited. Different provider than the primary. No .env edit.";
+        }
         saveKey.disabled = data.can_install_key === false;
+        saveBackup.disabled = data.can_install_backup === false;
         renderAuth(data);
         const tools = document.getElementById("tools");
         tools.innerHTML = "";
@@ -443,7 +467,7 @@
         });
         if (!log.childElementCount) {
           if (ready) {
-            add("At your service. Weather, research, memory, automations, computer use, mail, calendar, and MCP — one AI key. Replies stream here as I work. Refresh to restore this conversation from local memory. Clear conversation for a fresh thread — remembered facts stay. Remember facts, schedule reminders, and connect MCP servers in the sidebar without chatting. Reminders fire here while the page is open. Paste a Google OAuth client ID in the sidebar, then Connect Google when you want inbox, full email bodies, and today's calendar.", "jarvis");
+            add("At your service. Weather, research, memory, automations, computer use, mail, calendar, and MCP — one AI key. Replies stream here as I work. Refresh to restore this conversation from local memory. Clear conversation for a fresh thread — remembered facts stay. Remember facts, schedule reminders, and connect MCP servers in the sidebar without chatting. Reminders fire here while the page is open. Optionally paste a second AI key as a backup if the first provider fails. Paste a Google OAuth client ID in the sidebar, then Connect Google when you want inbox, full email bodies, and today's calendar.", "jarvis");
           } else {
             add(data.error || "Paste one AI API key in the sidebar. No .env edit and no restart.", "system");
             add("You can still remember facts, schedule reminders, connect MCP servers, and connect Google without an AI key.", "system");
@@ -771,6 +795,33 @@
         await refreshStatus();
         saveKey.disabled = false;
         if (ready) prompt.focus();
+      });
+
+      backupForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const api_key = backupInput.value.trim();
+        if (!api_key) {
+          add("Paste a backup AI API key first.", "system");
+          return;
+        }
+        saveBackup.disabled = true;
+        try {
+          const res = await fetch("/api/key/backup", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ api_key, provider: backupProvider.value }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            add(data.error || "Could not save that backup key.", "system");
+          } else {
+            backupInput.value = "";
+            add(data.message || "Backup key saved.", "system");
+          }
+        } catch (err) {
+          add("Could not reach the local Jarvis server.", "system");
+        }
+        await refreshStatus();
       });
 
       document.getElementById("composer").addEventListener("submit", async (event) => {
