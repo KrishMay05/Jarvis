@@ -38,6 +38,7 @@ from src.config import (
     LLMSettings,
     MissingAPIKeyError,
     describe_runtime,
+    install_backup_llm_key,
     install_google_oauth_config,
     install_llm_key,
     list_llm_settings,
@@ -141,6 +142,8 @@ class JarvisWebApp:
             )
         if verb == "POST" and route == "/api/key":
             return self._install_key(body)
+        if verb == "POST" and route == "/api/key/backup":
+            return self._install_backup_key(body)
         if verb == "POST" and route == "/api/memory":
             return self._remember_fact(body)
         if verb == "POST" and route == "/api/memory/forget":
@@ -242,6 +245,7 @@ class JarvisWebApp:
             "mcp_servers": self._mcp_payload()["servers"],
             "bind": "localhost only — not exposed on your LAN",
             "can_install_key": self._accepts_key_install(),
+            "can_install_backup": self._accepts_key_install() and self.ready,
             "can_install_google": self._accepts_key_install(),
             "scheduler": self._scheduler_status(),
         }
@@ -822,6 +826,51 @@ class JarvisWebApp:
                 "runtime": status.get("runtime"),
                 "google": status.get("google"),
                 "auth": status.get("auth"),
+            },
+        )
+
+    def _install_backup_key(self, body: bytes) -> UiResponse:
+        """Save an optional second AI key. Primary stays; no restart."""
+        if not self._accepts_key_install():
+            return _json(403, {"error": "AI keys can only be pasted on localhost."})
+        if self.settings is None or self.missing_key:
+            return _json(
+                400,
+                {"error": "Paste a primary AI key first. A backup is optional."},
+            )
+        try:
+            payload = json.loads(body.decode("utf-8") or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return _json(400, {"error": "Send JSON like {\"api_key\": \"...\"}."})
+        if not isinstance(payload, dict):
+            return _json(400, {"error": "Send a JSON object with an api_key field."})
+        api_key = payload.get("api_key") or payload.get("key") or ""
+        provider = payload.get("provider")
+        try:
+            backup = install_backup_llm_key(
+                str(api_key or ""),
+                None if provider is None else str(provider),
+                path=self.env_path,
+            )
+        except InvalidAPIKeyError as exc:
+            return _json(400, {"error": str(exc)})
+        except MissingAPIKeyError as exc:
+            return _json(400, {"error": str(exc)})
+
+        reset_failover_state()
+        status = self.status_payload()
+        return _json(
+            200,
+            {
+                "ok": True,
+                "ready": True,
+                "message": (
+                    f"Backup ready: {backup.summary()}. "
+                    "Used only if the primary provider fails — no restart needed. "
+                    "The key stays on this machine in .env (gitignored)."
+                ),
+                "llm": status.get("llm"),
+                "runtime": status.get("runtime"),
             },
         )
 

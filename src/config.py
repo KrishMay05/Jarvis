@@ -211,7 +211,7 @@ def describe_runtime(settings: LLMSettings | None = None) -> str:
         "research (Wikipedia + public web), chat (your LLM), "
         "memory (local file), automations (local schedule; --serve fires them in the background), "
         "computer (public web pages), mail/calendar (Google OAuth), "
-        "web UI (localhost --serve; paste an AI key or Google OAuth client ID, streaming chat, restored history, clear conversation, edit memory/automations/MCP, or Connect Google)\n"
+        "web UI (localhost --serve; paste an AI key, optional backup key, or Google OAuth client ID, streaming chat, restored history, clear conversation, edit memory/automations/MCP, or Connect Google)\n"
         f"{mcp_status_line()}\n"
         f"{memory_status_line()}\n"
         f"{automation_status_line()}\n"
@@ -335,6 +335,70 @@ def install_llm_key(
     settings = apply_llm_key(api_key, provider)
     persist_llm_key(api_key, settings.provider, path=path)
     return settings
+
+
+def apply_backup_llm_key(
+    api_key: str,
+    provider: str | None = None,
+) -> LLMSettings:
+    """Add a second provider key without changing the primary.
+
+    Pins ``JARVIS_LLM_PROVIDER`` to the current primary so a Gemini backup
+    cannot steal first place from an implicit OpenAI/Anthropic primary.
+    """
+    primary = get_llm_settings()
+    key = normalize_api_key(api_key)
+    name = resolve_provider(key, provider)
+    if name == primary.provider:
+        raise InvalidAPIKeyError(
+            "A backup must be a different provider than the primary. "
+            "Use Save key to replace the primary."
+        )
+    os.environ[provider_key_var(name)] = key
+    os.environ["JARVIS_LLM_PROVIDER"] = primary.provider
+    return LLMSettings(
+        provider=name,
+        api_key=key,
+        model=_model_for(name, allow_override=False),
+    )
+
+
+def persist_backup_llm_key(
+    api_key: str,
+    provider: str | None = None,
+    *,
+    path: Path | str | None = None,
+) -> Path:
+    """Write an optional backup key into local .env (mode 0600)."""
+    primary = get_llm_settings()
+    key = normalize_api_key(api_key)
+    name = resolve_provider(key, provider)
+    if name == primary.provider:
+        raise InvalidAPIKeyError(
+            "A backup must be a different provider than the primary. "
+            "Use Save key to replace the primary."
+        )
+    target = Path(path).expanduser() if path else env_file_path()
+    _upsert_env_file(
+        target,
+        {
+            provider_key_var(name): key,
+            "JARVIS_LLM_PROVIDER": primary.provider,
+        },
+    )
+    return target
+
+
+def install_backup_llm_key(
+    api_key: str,
+    provider: str | None = None,
+    *,
+    path: Path | str | None = None,
+) -> LLMSettings:
+    """Apply then persist an optional backup key. Primary stays put."""
+    backup = apply_backup_llm_key(api_key, provider)
+    persist_backup_llm_key(api_key, backup.provider, path=path)
+    return backup
 
 
 def _strip_wrapping_quotes(value: str) -> str:

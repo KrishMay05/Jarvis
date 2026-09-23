@@ -27,7 +27,7 @@ OPENAI_API_KEY=your-openai-key
 ANTHROPIC_API_KEY=your-anthropic-key
 ```
 
-Optional overrides: `JARVIS_LLM_PROVIDER=gemini|openai|anthropic`, `JARVIS_MODEL=...`, or a generic `JARVIS_API_KEY`. If several provider keys are set, Gemini is the primary unless you set `JARVIS_LLM_PROVIDER`. Extra keys are optional backups — if the primary provider is down, rate-limited, or rejects the key, Jarvis fails over automatically. One key is still enough. Set `JARVIS_LLM_FAILOVER=0` to disable that.
+Optional overrides: `JARVIS_LLM_PROVIDER=gemini|openai|anthropic`, `JARVIS_MODEL=...`, or a generic `JARVIS_API_KEY`. If several provider keys are set, Gemini is the primary unless you set `JARVIS_LLM_PROVIDER`. Extra keys are optional backups — if the primary provider is down, rate-limited, or rejects the key, Jarvis fails over automatically. Paste the second key in the localhost UI (**Save backup**) or put it in `.env`. One key is still enough. Set `JARVIS_LLM_FAILOVER=0` to disable that.
 
 Confirm what Jarvis detected (including any optional backup LLM):
 
@@ -65,7 +65,7 @@ python main.py --serve --open
 python main.py --run-due
 ```
 
-The web UI is **localhost only** (`http://127.0.0.1:8787/`). Same one AI key as the REPL — no extra vendor account. If `.env` has no key yet, the page still loads: paste a Gemini, OpenAI, or Anthropic key in the sidebar. Chat unlocks immediately and the key is written to local `.env` (gitignored, mode 0600). No restart.
+The web UI is **localhost only** (`http://127.0.0.1:8787/`). Same one AI key as the REPL — no extra vendor account. If `.env` has no key yet, the page still loads: paste a Gemini, OpenAI, or Anthropic key in the sidebar. Chat unlocks immediately and the key is written to local `.env` (gitignored, mode 0600). After that you can paste an optional **backup** key from a different provider — failover uses it only if the primary is down. No restart.
 
 Type `exit`, `bye`, or `close` to leave the REPL.
 
@@ -73,7 +73,7 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 
 | Capability | How |
 | --- | --- |
-| Chat / planning | Gemini, OpenAI, or Anthropic (optional extra key is a backup if the first provider fails) |
+| Chat / planning | Gemini, OpenAI, or Anthropic (optional extra key is a backup if the first provider fails — paste it in the UI or `.env`) |
 | General conversation | Chat Agent (same key — greetings, writing, math, advice) |
 | Weather | [wttr.in](https://wttr.in) (no extra key) |
 | Time | Local timezone database |
@@ -84,7 +84,7 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Mail | Gmail inbox/search and full message bodies after Connect Google in the web UI or `python main.py --connect google` (OAuth, not an AI key) |
 | Calendar | Today's / tomorrow's / this week's Google Calendar agenda after the same Google login |
 | MCP tools | Local stdio servers from `mcp.json` or the localhost UI MCP editor (no extra AI key) |
-| Web UI | `python main.py --serve` on 127.0.0.1 (paste the AI key or Google OAuth client ID in the sidebar or use `.env`; Connect Google there too; chat streams live; refresh restores recent turns; Clear conversation starts a fresh thread) |
+| Web UI | `python main.py --serve` on 127.0.0.1 (paste the AI key, an optional backup key, or Google OAuth client ID in the sidebar or use `.env`; Connect Google there too; chat streams live; refresh restores recent turns; Clear conversation starts a fresh thread) |
 
 ## MCP connections
 
@@ -211,11 +211,11 @@ The REPL is optional. Start the UI even before you have a key:
 python main.py --serve --open
 ```
 
-Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. **Paste one AI key** there to unlock chat without editing `.env` or restarting. **Paste a Google OAuth client ID** in the Auth sidebar the same way, then **Connect Google** — no `.env` edit and no restart. **Remember facts, schedule automations, and connect MCP servers** in that same sidebar — no chat phrasing and no extra API key. **Connect Google** and **Disconnect** live there too — same OAuth as `--connect google`. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar, MCP tools. **Replies stream into the chat log** (planning, specialist steps, then tokens) so Send is not frozen. **Refresh restores recent conversation** from local memory — the same turns the REPL already kept. **Clear conversation** empties that log and the on-disk turns without deleting remembered facts. **Due reminders appear in the chat log on their own** while `--serve` is running; you do not need to send a message or set up system cron for that.
+Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / `--host`). The sidebar shows the detected LLM, built-in tools, memory, automations, Google auth, and MCP. **Paste one AI key** there to unlock chat without editing `.env` or restarting. **Paste an optional backup key** from a different Gemini / OpenAI / Anthropic account after that — failover uses it only if the primary is down, still no `.env` edit and no restart. **Paste a Google OAuth client ID** in the Auth sidebar the same way, then **Connect Google** — no `.env` edit and no restart. **Remember facts, schedule automations, and connect MCP servers** in that same sidebar — no chat phrasing and no extra API key. **Connect Google** and **Disconnect** live there too — same OAuth as `--connect google`. Chat goes through the same orchestrator as the terminal — weather, research, remember, reminders, browse, inbox, calendar, MCP tools. **Replies stream into the chat log** (planning, specialist steps, then tokens) so Send is not frozen. **Refresh restores recent conversation** from local memory — the same turns the REPL already kept. **Clear conversation** empties that log and the on-disk turns without deleting remembered facts. **Due reminders appear in the chat log on their own** while `--serve` is running; you do not need to send a message or set up system cron for that.
 
 - No extra API key and no cloud UI vendor
 - Binds to loopback so the assistant is not on your LAN
-- Works without a key too: paste a Gemini / OpenAI / Anthropic key in the sidebar (saved to local `.env`), paste a Google OAuth client ID, remember facts, schedule reminders, add MCP servers, or keep chat paused and still connect Google
+- Works without a key too: paste a Gemini / OpenAI / Anthropic key in the sidebar (saved to local `.env`), then an optional backup key from another provider, paste a Google OAuth client ID, remember facts, schedule reminders, add MCP servers, or keep chat paused and still connect Google
 - Status/health are JSON at `/api/status` and `/api/health` (including optional LLM fallbacks)
 - Chat is `POST /api/chat` (full reply) or `POST /api/chat/stream` (SSE: status, specialist steps, tokens, due jobs)
 - Recent conversation is JSON at `GET /api/chat/history` (restored into the chat log on refresh; no extra API key)
@@ -225,6 +225,7 @@ Jarvis serves a chat page at `http://127.0.0.1:8787/` (override with `--port` / 
 - MCP servers are JSON at `/api/mcp` (`POST` to add/update, `/remove`, `/disable`, `/enable`, `/reload`)
 - Due automations are JSON at `/api/due` (consumed by the page poll)
 - Saving a key is `POST /api/key` on localhost only — the key is never returned in API responses
+- Saving an optional backup key is `POST /api/key/backup` on localhost only — the primary stays; the backup key is never returned
 - Saving a Google OAuth client ID is `POST /api/auth/google/config` on localhost only — the client ID and secret are never returned in API responses
 - Google OAuth callback is `/oauth/google/callback` on the same localhost server
 
@@ -250,7 +251,7 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 - `src/memory/` — local persistent facts and recent turns
 - `src/orchestrator.py` — routes a request, loops specialists, then answers
 - `src/tools/` — weather, time, research, memory, automation, computer, mail, calendar, MCP adapters
-- `src/ui/` — localhost web UI (`--serve`; streaming replies; restored history; clear conversation; background automation ticker; memory, automation, and MCP editors; paste AI key or Google OAuth client ID)
+- `src/ui/` — localhost web UI (`--serve`; streaming replies; restored history; clear conversation; background automation ticker; memory, automation, and MCP editors; paste AI key, optional backup key, or Google OAuth client ID)
 - `tests/` — unit tests that do not need live API keys
 
 ## Roadmap
@@ -277,5 +278,6 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 18. ~~Restore chat history in the localhost UI on refresh~~ (same `memory.json` turns as the REPL; no extra key)
 19. ~~Paste a Google OAuth client ID from the localhost UI~~ (no `.env` edit, no restart; still not a second AI key)
 20. ~~Clear conversation in the localhost UI~~ (same `memory.json` turns as the REPL; facts stay; no extra key)
-21. Desktop / JS-capable computer use (Playwright or screenshot+input)
-22. Microsoft / Outlook OAuth using the same auth store
+21. ~~Paste an optional backup LLM key from the localhost UI~~ (different provider than the primary; failover only; no `.env` edit, no restart)
+22. Desktop / JS-capable computer use (Playwright or screenshot+input)
+23. Microsoft / Outlook OAuth using the same auth store
