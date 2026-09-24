@@ -73,6 +73,12 @@ def test_index_is_self_contained_html():
     assert "pollDue" in html
     assert "/api/key" in html
     assert "/api/key/backup" in html
+    assert "/api/setup" in html
+    assert "setup-wizard" in html
+    assert "Get started" in html
+    assert "Home city" in html
+    assert "Skip for now" in html
+    assert "open-setup" in html
     assert "/api/auth/google/config" in html
     assert "Connect Google" in html
     assert "Save key" in html
@@ -108,6 +114,11 @@ def test_status_without_key_is_not_ready():
     assert payload["memory_facts"] == []
     assert payload["automation_jobs"] == []
     assert payload["mcp_servers"] == []
+    assert payload["setup"]["completed"] is False
+    assert payload["setup"]["show"] is True
+    assert payload["setup"]["has_key"] is False
+    assert payload["setup"]["has_profile"] is False
+    assert payload["setup"]["can_complete"] is True
 
 
 def test_status_with_settings_lists_llm():
@@ -1638,3 +1649,115 @@ def test_ui_add_mcp_attaches_agent(monkeypatch, tmp_path):
         assert {tool.name() for tool in manager.tools} == {"echo", "add"}
     finally:
         orch.close()
+
+
+def test_setup_get_works_without_ai_key():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    response = app.dispatch("GET", "/api/setup")
+    payload = json.loads(response.body)
+    assert response.status == 200
+    assert payload["completed"] is False
+    assert payload["show"] is True
+    assert payload["has_key"] is False
+    assert payload["has_profile"] is False
+    assert payload["can_complete"] is True
+
+
+def test_setup_profile_and_complete_without_ai_key():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    saved = app.dispatch(
+        "POST",
+        "/api/setup",
+        json.dumps(
+            {"name": "Ada", "city": "Austin", "units": "celsius"}
+        ).encode(),
+    )
+    mid = json.loads(saved.body)
+    assert saved.status == 200
+    assert mid["completed"] is False
+    assert mid["has_profile"] is True
+    texts = [fact["text"] for fact in mid["facts"]]
+    assert "My name is Ada" in texts
+    assert "Home city is Austin" in texts
+    assert "I prefer Celsius" in texts
+    finished = app.dispatch("POST", "/api/setup", b'{"complete": true}')
+    done = json.loads(finished.body)
+    assert finished.status == 200
+    assert done["completed"] is True
+    assert done["show"] is False
+    assert "Setup complete" in done["message"]
+    status = json.loads(app.dispatch("GET", "/api/status").body)
+    assert status["ready"] is False
+    assert status["setup"]["completed"] is True
+    assert status["setup"]["show"] is False
+
+
+def test_setup_skip_without_profile():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    skipped = app.dispatch("POST", "/api/setup", b'{"skip": true}')
+    payload = json.loads(skipped.body)
+    assert skipped.status == 200
+    assert payload["completed"] is True
+    assert payload["skipped"] is True
+    assert payload["facts"] == []
+    assert "skipped" in payload["message"].lower()
+
+
+def test_setup_replaces_profile_facts():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    app.dispatch(
+        "POST",
+        "/api/setup",
+        json.dumps({"name": "Ada", "city": "Austin"}).encode(),
+    )
+    again = app.dispatch(
+        "POST",
+        "/api/setup",
+        json.dumps({"name": "Krish", "city": "Seattle", "units": "f"}).encode(),
+    )
+    payload = json.loads(again.body)
+    texts = [fact["text"] for fact in payload["facts"]]
+    assert texts == [
+        "My name is Krish",
+        "Home city is Seattle",
+        "I prefer Fahrenheit",
+    ]
+
+
+def test_setup_rejects_empty_and_bad_units():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    empty = app.dispatch("POST", "/api/setup", b"{}")
+    assert empty.status == 400
+    bad = app.dispatch("POST", "/api/setup", b'{"units":"kelvin"}')
+    assert bad.status == 400
+    broken = app.dispatch("POST", "/api/setup", b"not-json")
+    assert broken.status == 400
+
+
+def test_setup_refuses_non_loopback_bind():
+    app = JarvisWebApp(
+        missing_key="No AI API key found.",
+        public_base="http://192.168.1.20:8787",
+    )
+    blocked = app.dispatch(
+        "POST",
+        "/api/setup",
+        json.dumps({"complete": True}).encode(),
+    )
+    assert blocked.status == 403
+    status = json.loads(app.dispatch("GET", "/api/status").body)
+    assert status["setup"]["show"] is False
+    assert status["setup"]["can_complete"] is False
+    assert status["setup"]["completed"] is False
+
+
+def test_setup_has_profile_from_sidebar_fact():
+    app = JarvisWebApp(missing_key="No AI API key found.")
+    app.dispatch(
+        "POST",
+        "/api/memory",
+        json.dumps({"text": "I live in Austin"}).encode(),
+    )
+    payload = json.loads(app.dispatch("GET", "/api/setup").body)
+    assert payload["has_profile"] is True
+    assert payload["completed"] is False
