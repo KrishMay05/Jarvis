@@ -10,6 +10,7 @@ def isolate_local_state(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_MEMORY_PATH", str(tmp_path / "memory.json"))
     monkeypatch.setenv("JARVIS_AUTOMATIONS_PATH", str(tmp_path / "automations.json"))
     monkeypatch.setenv("JARVIS_AUTH_PATH", str(tmp_path / "auth.json"))
+    monkeypatch.setenv("JARVIS_SETUP_PATH", str(tmp_path / "setup.json"))
     monkeypatch.setenv("JARVIS_ENV_PATH", str(tmp_path / "jarvis.env"))
     monkeypatch.setenv("JARVIS_HOME", str(tmp_path / "jarvis-home"))
     monkeypatch.delenv("GOOGLE_OAUTH_CLIENT_ID", raising=False)

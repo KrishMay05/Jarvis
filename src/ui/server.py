@@ -54,6 +54,14 @@ from src.mcp.config import (
     upsert_mcp_server,
 )
 from src.memory.store import MemoryStore, memory_status_line
+from src.setup.store import (
+    SetupProfileError,
+    apply_setup_profile,
+    has_profile_facts,
+    load_setup_state,
+    mark_setup_complete,
+    setup_status_line,
+)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
@@ -121,6 +129,10 @@ class JarvisWebApp:
             return _json(200, self._automations_payload())
         if verb == "GET" and route == "/api/memory":
             return _json(200, self._memory_payload())
+        if verb == "GET" and route == "/api/setup":
+            return _json(200, self._setup_payload())
+        if verb == "POST" and route == "/api/setup":
+            return self._save_setup(body)
         if verb == "GET" and route == "/api/due":
             return _json(200, {"due": self.take_due()})
         if verb == "GET" and route == "/api/chat/history":
@@ -186,6 +198,7 @@ class JarvisWebApp:
             "/api/mcp",
             "/api/due",
             "/api/chat/history",
+            "/api/setup",
         }:
             return self.dispatch("GET", path, b"")
         if verb not in {"GET", "POST"}:
@@ -248,6 +261,7 @@ class JarvisWebApp:
             "can_install_backup": self._accepts_key_install() and self.ready,
             "can_install_google": self._accepts_key_install(),
             "scheduler": self._scheduler_status(),
+            "setup": self._setup_payload(),
         }
 
     def _google_status(self) -> dict:
@@ -280,6 +294,69 @@ class JarvisWebApp:
             "facts": [fact.to_dict() for fact in store.list_facts()],
             "status": store.status_line(),
         }
+
+    def _setup_payload(self) -> dict:
+        """First-run wizard state. Localhost can complete it without an AI key."""
+        state = load_setup_state()
+        local = self._accepts_key_install()
+        return {
+            "completed": state.completed,
+            "skipped": state.skipped,
+            "show": local and not state.completed,
+            "can_complete": local,
+            "has_key": self.ready,
+            "has_profile": has_profile_facts(self._memory_store()),
+            "status": setup_status_line(state),
+        }
+
+    def _save_setup(self, body: bytes) -> UiResponse:
+        """Save optional profile facts and/or finish the first-run wizard."""
+        blocked = self._refuse_remote_writes()
+        if blocked is not None:
+            return blocked
+        payload, error = _json_object(
+            body,
+            'Send JSON like {"name": "Ada", "city": "Austin", "units": "celsius"}.',
+        )
+        if error is not None:
+            return error
+        skip = bool(payload.get("skip"))
+        complete = bool(payload.get("complete")) or skip
+        name = str(payload.get("name") or "").strip()
+        city = str(payload.get("city") or payload.get("home_city") or "").strip()
+        units = str(payload.get("units") or "").strip()
+        messages: list[str] = []
+        if name or city or units:
+            try:
+                with self._lock:
+                    messages = apply_setup_profile(
+                        self._memory_store(),
+                        name=name,
+                        city=city,
+                        units=units,
+                    )
+            except SetupProfileError as exc:
+                return _json(400, {"error": str(exc)})
+        elif not complete:
+            return _json(
+                400,
+                {"error": "Add a name, home city, or temperature unit — or finish setup."},
+            )
+        state = load_setup_state()
+        if complete:
+            state = mark_setup_complete(skipped=skip)
+        data = self._setup_payload()
+        memory = self._memory_payload()
+        data.update(
+            {
+                "ok": True,
+                "facts": memory["facts"],
+                "memory": memory["status"],
+                "messages": messages,
+                "message": _setup_result_message(state, messages, skipped=skip),
+            }
+        )
+        return _json(200, data)
 
     def _chat_history_payload(self) -> dict:
         """Recent user/assistant turns from local memory — no extra API key."""
@@ -1145,6 +1222,20 @@ def _json_object(body: bytes, hint: str) -> tuple[dict | None, UiResponse | None
 def _json(status: int, payload: dict) -> UiResponse:
     raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     return UiResponse(status, raw)
+
+
+def _setup_result_message(state, messages: list[str], *, skipped: bool) -> str:
+    bits = list(messages)
+    if skipped:
+        bits.append("Setup skipped. Reopen Setup in the sidebar anytime — still one AI key.")
+    elif state.completed:
+        bits.append(
+            "Setup complete. Chat, weather, research, memory, automations, "
+            "and computer use use the same AI key. Google and MCP stay optional."
+        )
+    if bits:
+        return " ".join(bits)
+    return "Nothing changed."
 
 
 def _sse(event: dict) -> bytes:

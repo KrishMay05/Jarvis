@@ -57,6 +57,16 @@
         color: var(--gold-2);
       }
       .brand span { color: var(--muted); letter-spacing: 0.08em; font-size: 0.78rem; }
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .header-actions button {
+        min-height: 32px;
+        padding: 6px 12px;
+        font-size: 0.78rem;
+      }
       .pill {
         border: 1px solid var(--line);
         background: var(--panel);
@@ -249,6 +259,56 @@
         aside { max-height: 240px; }
         .msg { max-width: 92%; }
       }
+      .wizard {
+        position: fixed;
+        inset: 0;
+        background: rgba(4, 6, 10, 0.72);
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        z-index: 20;
+      }
+      .wizard[hidden] { display: none; }
+      .wizard-card {
+        width: min(480px, 100%);
+        background: linear-gradient(180deg, var(--panel), var(--panel-2));
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        box-shadow: var(--shadow);
+        padding: 22px 20px 18px;
+      }
+      .wizard-card h2 {
+        margin: 8px 0 10px;
+        color: var(--gold-2);
+        font-size: 1.2rem;
+      }
+      .wizard-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+      }
+      .wizard-card .key-form { margin-top: 12px; }
+      .wizard-actions {
+        display: flex;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+      }
+      .wizard-checklist {
+        list-style: none;
+        padding: 0;
+        margin: 12px 0 0;
+      }
+      .wizard-checklist li {
+        color: var(--muted);
+        font-size: 0.86rem;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .wizard-checklist li.ok { color: var(--ok); }
+      #wizard-error { color: var(--danger); margin-top: 10px; }
     </style>
   </head>
   <body>
@@ -258,7 +318,10 @@
           <h1>Jarvis</h1>
           <span>personal assistant</span>
         </div>
-        <div id="pill" class="pill">Checking…</div>
+        <div class="header-actions">
+          <button type="button" id="open-setup" class="ghost">Setup</button>
+          <div id="pill" class="pill">Checking…</div>
+        </div>
       </header>
       <div class="layout">
         <aside>
@@ -344,8 +407,48 @@
             <textarea id="prompt" rows="2" placeholder="Ask Jarvis… weather, research, remember, remind me, open a page, inbox, today's calendar, MCP tools"></textarea>
             <button id="send" type="submit">Send</button>
           </form>
-          <div class="hint">Localhost only. Paste one AI key in the sidebar — no .env edit and no restart. A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails — paste it here too, still no .env edit. Replies stream as Jarvis works (tool steps, then the answer). Refreshing this page restores recent conversation from local memory (same file as the REPL — no extra API key). Clear conversation when you want a fresh thread — remembered facts stay (no extra API key). Remember facts, schedule automations, and connect MCP servers here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). Paste a Google OAuth client ID here, then Connect Google for mail and calendar — OAuth, not a second AI key, and no restart.</div>
+          <div class="hint">Localhost only. First launch opens a setup wizard: paste one AI key, then optional name / home city / units. No .env edit and no restart. A second Gemini/OpenAI/Anthropic key is an optional backup if the first provider fails — paste it in the sidebar, still no .env edit. Replies stream as Jarvis works (tool steps, then the answer). Refreshing this page restores recent conversation from local memory (same file as the REPL — no extra API key). Clear conversation when you want a fresh thread — remembered facts stay (no extra API key). Remember facts, schedule automations, and connect MCP servers here without chatting (no extra API key). Reminders fire in the background while this page is open (no extra cron). Paste a Google OAuth client ID here, then Connect Google for mail and calendar — OAuth, not a second AI key, and no restart.</div>
         </section>
+      </div>
+    </div>
+    <div id="setup-wizard" class="wizard" hidden>
+      <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+        <div class="wizard-top">
+          <p id="wizard-progress" class="meta">Step 1 of 3</p>
+          <button type="button" id="wizard-skip" class="ghost">Skip for now</button>
+        </div>
+        <h2 id="wizard-title">Get started</h2>
+        <p id="wizard-copy" class="meta">Drop in one AI API key. Built-in tools do not need extra accounts.</p>
+        <div id="wizard-pane-key" class="wizard-pane">
+          <form id="wizard-key-form" class="key-form">
+            <select id="wizard-key-provider" aria-label="AI provider">
+              <option value="auto">Auto-detect provider</option>
+              <option value="gemini">Gemini</option>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+            </select>
+            <input id="wizard-api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste Gemini / OpenAI / Anthropic key" />
+          </form>
+        </div>
+        <div id="wizard-pane-profile" class="wizard-pane" hidden>
+          <form id="wizard-profile-form" class="key-form">
+            <input id="wizard-name" autocomplete="name" spellcheck="false" placeholder="Your name (optional)" />
+            <input id="wizard-city" autocomplete="address-level2" spellcheck="true" placeholder="Home city (optional)" />
+            <select id="wizard-units" aria-label="Temperature units">
+              <option value="">Temperature units (optional)</option>
+              <option value="celsius">Celsius</option>
+              <option value="fahrenheit">Fahrenheit</option>
+            </select>
+          </form>
+        </div>
+        <div id="wizard-pane-ready" class="wizard-pane" hidden>
+          <ul id="wizard-checklist" class="wizard-checklist"></ul>
+        </div>
+        <p id="wizard-error" class="meta"></p>
+        <div class="wizard-actions">
+          <button type="button" id="wizard-back" class="ghost">Back</button>
+          <button type="button" id="wizard-next">Continue</button>
+        </div>
       </div>
     </div>
     <script>
@@ -368,7 +471,15 @@
       const googleClientSecret = document.getElementById("google-client-secret");
       const saveGoogle = document.getElementById("save-google-oauth");
       const clearChat = document.getElementById("clear-chat");
+      const wizard = document.getElementById("setup-wizard");
+      const wizardNext = document.getElementById("wizard-next");
+      const wizardBack = document.getElementById("wizard-back");
+      const wizardSkip = document.getElementById("wizard-skip");
+      const wizardError = document.getElementById("wizard-error");
       let ready = false;
+      let wizardStep = 1;
+      let lastSetup = null;
+      let wizardBusy = false;
 
       function add(text, cls) {
         const el = document.createElement("div");
@@ -456,6 +567,8 @@
         }
         saveKey.disabled = data.can_install_key === false;
         saveBackup.disabled = data.can_install_backup === false;
+        lastSetup = data.setup || null;
+        syncWizard(lastSetup);
         renderAuth(data);
         const tools = document.getElementById("tools");
         tools.innerHTML = "";
@@ -465,7 +578,7 @@
           chip.textContent = name;
           tools.appendChild(chip);
         });
-        if (!log.childElementCount) {
+        if (!log.childElementCount && !(data.setup && data.setup.show)) {
           if (ready) {
             add("At your service. Weather, research, memory, automations, computer use, mail, calendar, and MCP — one AI key. Replies stream here as I work. Refresh to restore this conversation from local memory. Clear conversation for a fresh thread — remembered facts stay. Remember facts, schedule reminders, and connect MCP servers in the sidebar without chatting. Reminders fire here while the page is open. Optionally paste a second AI key as a backup if the first provider fails. Paste a Google OAuth client ID in the sidebar, then Connect Google when you want inbox, full email bodies, and today's calendar.", "jarvis");
           } else {
@@ -979,6 +1092,187 @@
           add("Could not disconnect Google.", "system");
         }
         refreshStatus();
+      });
+
+      function showWizard() {
+        wizard.hidden = false;
+        renderWizard();
+      }
+
+      function hideWizard() {
+        wizard.hidden = true;
+        wizardError.textContent = "";
+      }
+
+      function syncWizard(setup) {
+        if (!setup) return;
+        if (setup.show && wizard.hidden) showWizard();
+        if (!wizard.hidden) renderWizard();
+      }
+
+      function renderWizard() {
+        const setup = lastSetup || {};
+        const panes = {
+          1: document.getElementById("wizard-pane-key"),
+          2: document.getElementById("wizard-pane-profile"),
+          3: document.getElementById("wizard-pane-ready"),
+        };
+        Object.keys(panes).forEach((key) => {
+          panes[key].hidden = Number(key) !== wizardStep;
+        });
+        document.getElementById("wizard-progress").textContent = "Step " + wizardStep + " of 3";
+        wizardBack.hidden = wizardStep === 1;
+        if (wizardStep === 1) {
+          document.getElementById("wizard-title").textContent = "Get started";
+          document.getElementById("wizard-copy").textContent = setup.has_key
+            ? "An AI key is already on this machine. Continue to optional profile facts, or skip."
+            : "Drop in one Gemini, OpenAI, or Anthropic key. Weather, research, memory, automations, and computer use need no extra accounts.";
+          wizardNext.textContent = setup.has_key ? "Continue" : "Save key and continue";
+        } else if (wizardStep === 2) {
+          document.getElementById("wizard-title").textContent = "About you";
+          document.getElementById("wizard-copy").textContent = "Optional. Jarvis remembers these locally so weather can reuse a home city. No extra API key.";
+          wizardNext.textContent = "Save and continue";
+        } else {
+          document.getElementById("wizard-title").textContent = "You are ready";
+          document.getElementById("wizard-copy").textContent = "Same one AI key for chat and built-in tools. Google mail/calendar and MCP stay optional.";
+          wizardNext.textContent = "Finish setup";
+          renderWizardChecklist(setup);
+        }
+      }
+
+      function renderWizardChecklist(setup) {
+        const list = document.getElementById("wizard-checklist");
+        list.replaceChildren();
+        const items = [
+          [Boolean(setup.has_key), "Ready — AI key unlocks chat, weather, research, memory, automations, computer use"],
+          [Boolean(setup.has_profile), "Ready — profile facts (name, home city, or units)"],
+          [true, "Ready — built-in tools need no extra vendor keys"],
+          [false, "Optional — Connect Google for mail/calendar, or add an MCP server"],
+        ];
+        items[1][0] = Boolean(setup.has_profile);
+        items[0][1] = items[0][0]
+          ? items[0][1]
+          : "Next — paste one Gemini, OpenAI, or Anthropic key";
+        items[1][1] = items[1][0]
+          ? items[1][1]
+          : "Optional — add a name, home city, or temperature unit";
+        items.forEach(([ok, text]) => {
+          const li = document.createElement("li");
+          if (ok) li.className = "ok";
+          li.textContent = text;
+          list.appendChild(li);
+        });
+      }
+
+      async function wizardSaveKey() {
+        const input = document.getElementById("wizard-api-key");
+        const api_key = input.value.trim();
+        if (!api_key) {
+          if (ready) return true;
+          wizardError.textContent = "Paste an AI API key, or skip for now. Chat stays paused until you do.";
+          return false;
+        }
+        const res = await fetch("/api/key", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_key,
+            provider: document.getElementById("wizard-key-provider").value,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          wizardError.textContent = data.error || "Could not save that key.";
+          return false;
+        }
+        input.value = "";
+        add(data.message || "AI key saved. Chat is ready.", "system");
+        await refreshStatus();
+        return true;
+      }
+
+      async function wizardSaveProfile() {
+        const name = document.getElementById("wizard-name").value.trim();
+        const city = document.getElementById("wizard-city").value.trim();
+        const units = document.getElementById("wizard-units").value.trim();
+        if (!name && !city && !units) return true;
+        const { res, data } = await postJson("/api/setup", { name, city, units });
+        if (!res.ok) {
+          wizardError.textContent = data.error || "Could not save those facts.";
+          return false;
+        }
+        add(data.message || "Remembered those profile facts.", "system");
+        await refreshStatus();
+        return true;
+      }
+
+      async function wizardFinish(skip) {
+        const { res, data } = await postJson("/api/setup", skip ? { skip: true } : { complete: true });
+        if (!res.ok) {
+          wizardError.textContent = data.error || "Could not finish setup.";
+          return false;
+        }
+        add(data.message || (skip ? "Setup skipped." : "Setup complete."), "system");
+        await refreshStatus();
+        hideWizard();
+        if (ready) prompt.focus();
+        return true;
+      }
+
+      async function wizardAdvance() {
+        if (wizardBusy) return;
+        wizardBusy = true;
+        wizardError.textContent = "";
+        wizardNext.disabled = true;
+        try {
+          if (wizardStep === 1) {
+            if (!(await wizardSaveKey())) return;
+            wizardStep = 2;
+            renderWizard();
+          } else if (wizardStep === 2) {
+            if (!(await wizardSaveProfile())) return;
+            wizardStep = 3;
+            renderWizard();
+          } else {
+            await wizardFinish(false);
+          }
+        } catch (err) {
+          wizardError.textContent = "Could not reach the local Jarvis server.";
+        } finally {
+          wizardBusy = false;
+          wizardNext.disabled = false;
+        }
+      }
+
+      wizardNext.addEventListener("click", wizardAdvance);
+      wizardBack.addEventListener("click", () => {
+        if (wizardStep > 1) wizardStep -= 1;
+        wizardError.textContent = "";
+        renderWizard();
+      });
+      wizardSkip.addEventListener("click", async () => {
+        if (wizardBusy) return;
+        wizardBusy = true;
+        try {
+          await wizardFinish(true);
+        } catch (err) {
+          wizardError.textContent = "Could not reach the local Jarvis server.";
+        } finally {
+          wizardBusy = false;
+        }
+      });
+      document.getElementById("open-setup").addEventListener("click", () => {
+        wizardStep = 1;
+        wizardError.textContent = "";
+        showWizard();
+      });
+      document.getElementById("wizard-key-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        wizardAdvance();
+      });
+      document.getElementById("wizard-profile-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        wizardAdvance();
       });
 
       async function clearChatHistory() {
