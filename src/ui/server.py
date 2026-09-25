@@ -216,7 +216,6 @@ class JarvisWebApp:
             getattr(orch, "automation_store", None) if orch is not None else None
         )
         llm = None
-        runtime = None
         if self.settings is not None:
             llm = {
                 "provider": self.settings.provider,
@@ -224,10 +223,7 @@ class JarvisWebApp:
                 "summary": self.settings.summary(),
                 "fallbacks": _fallback_summaries(self.settings),
             }
-            try:
-                runtime = describe_runtime(self.settings)
-            except MissingAPIKeyError:
-                runtime = None
+        runtime = describe_runtime(self.settings)
         return {
             "ok": True,
             "ready": self.ready,

@@ -40,6 +40,28 @@ def format_due_report(results: list[str]) -> str:
     return "Due automations:\n" + "\n".join(f"- {item}" for item in results)
 
 
+def skipped_run_job_note(
+    store: AutomationStore,
+    now: datetime | None = None,
+) -> str | None:
+    """Explain leftover ``run`` jobs when no LLM callback is available."""
+    leftover = [job for job in store.due_jobs(now) if job.kind == "run"]
+    if not leftover:
+        return None
+    if len(leftover) == 1:
+        job = leftover[0]
+        return (
+            f"1 run job still due ({job.id} '{job.title}') — it needs an AI key. "
+            "Paste one in `python main.py --serve` or set GEMINI_API_KEY / "
+            "OPENAI_API_KEY / ANTHROPIC_API_KEY, then rerun --run-due."
+        )
+    return (
+        f"{len(leftover)} run jobs still due — they need an AI key. "
+        "Paste one in `python main.py --serve` or set GEMINI_API_KEY / "
+        "OPENAI_API_KEY / ANTHROPIC_API_KEY, then rerun --run-due."
+    )
+
+
 def _execute(
     job: AutomationJob,
     run_prompt: Callable[[str], str] | None,

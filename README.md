@@ -35,7 +35,7 @@ Confirm what Jarvis detected (including any optional backup LLM):
 python main.py --status
 ```
 
-`--status` does not need a live model call. If two provider keys are in `.env`, the banner lists a **Fallback LLM** used only when the primary fails.
+`--status` does not need an API key or a live model call — it still lists tools, MCP, memory, automations, and auth so you can confirm the install before pasting a key. If two provider keys are in `.env`, the banner lists a **Fallback LLM** used only when the primary fails.
 
 If a Gemini key was ever committed to git history, rotate it in Google AI Studio and use the new value.
 
@@ -79,7 +79,7 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Time | Local timezone database |
 | Research | Wikipedia, named public sites, DuckDuckGo, then Stack Overflow (no extra key) |
 | Memory | Local `~/.jarvis/memory.json` — remember facts across sessions; inspect or forget them in the web UI; the chat log restores on refresh and can be cleared without deleting facts (no extra key) |
-| Automations | Local `~/.jarvis/automations.json` — reminders and recurring prompts; `--serve` fires them in the background and the sidebar can add/pause/cancel jobs (no extra key) |
+| Automations | Local `~/.jarvis/automations.json` — reminders and recurring prompts; `--serve` fires them in the background, `--run-due` fires reminders without an AI key, and the sidebar can add/pause/cancel jobs (no extra key) |
 | Computer use | Open public http(s) pages, read the text, follow on-page links (no extra key) |
 | Mail | Gmail inbox/search and full message bodies after Connect Google in the web UI or `python main.py --connect google` (OAuth, not an AI key) |
 | Calendar | Today's / tomorrow's / this week's Google Calendar agenda after the same Google login |
@@ -131,8 +131,8 @@ Reminders and recurring research/weather checks live in a local JSON file. Still
 - The localhost UI **Automations** sidebar lists jobs. Schedule, pause, resume, or cancel them without chatting (reminders still need no AI key; `run` jobs use the same key when they fire)
 - The REPL fires due jobs between turns
 - **`python main.py --serve` fires due jobs in the background** while the localhost UI is open (every 15 seconds). Reminders do not need an AI key; `run` jobs use the same key as chat. Due reports show up in the chat log without sending another message
-- Hook system cron (or Task Scheduler) to `python main.py --run-due` only if the UI and REPL are both closed
-- `python main.py --automations` lists jobs without needing an API key
+- Hook system cron (or Task Scheduler) to `python main.py --run-due` only if the UI and REPL are both closed. Reminders fire without an API key; `run` jobs use the same AI key as chat (or stay due until you paste one)
+- `python main.py --status` and `python main.py --automations` list jobs without needing an API key
 - Two kinds: **remind** (print a message) and **run** (send a stored prompt back through Jarvis)
 
 No extra vendor account. Recurring jobs use `every 30 minutes` or `daily at 8:00`.
@@ -282,5 +282,6 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 20. ~~Clear conversation in the localhost UI~~ (same `memory.json` turns as the REPL; facts stay; no extra key)
 21. ~~Paste an optional backup LLM key from the localhost UI~~ (different provider than the primary; failover only; no `.env` edit, no restart)
 22. ~~First-run setup wizard in the localhost UI~~ (one AI key plus optional name / home city / units; skip anytime; no extra vendor)
-23. Desktop / JS-capable computer use (Playwright or screenshot+input)
-24. Microsoft / Outlook OAuth using the same auth store
+23. ~~`--status` and reminder `--run-due` without an AI key~~ (CLI matches the UI; cron reminders need no model)
+24. Desktop / JS-capable computer use (Playwright or screenshot+input)
+25. Microsoft / Outlook OAuth using the same auth store
