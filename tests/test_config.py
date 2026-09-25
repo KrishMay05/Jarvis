@@ -1,5 +1,6 @@
 import os
 import stat
+import sys
 
 import pytest
 
@@ -298,6 +299,41 @@ def test_describe_runtime_mentions_optional_fallback(monkeypatch):
     assert "Fallback LLM: openai (gpt-4o-mini)" in text
     assert "optional extra key" in text.lower()
     assert "none required" in text.lower()
+
+
+def test_describe_runtime_without_api_key(monkeypatch):
+    text = describe_runtime()
+    assert "LLM: not configured" in text
+    assert "python main.py --serve" in text
+    assert "--run-due fires reminders without an AI key" in text
+    assert "wttr.in" in text
+    assert "MCP:" in text
+    assert "Memory:" in text
+    assert "Automations:" in text
+    assert "Auth:" in text
+    assert "none required" in text.lower()
+
+
+def test_main_status_without_api_key(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["main.py", "--status"])
+    from main import main
+
+    main()
+    out = capsys.readouterr().out
+    assert "LLM: not configured" in out
+    assert "Tools:" in out
+    assert "MCP:" in out
+
+
+def test_main_status_with_key(monkeypatch, capsys):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")
+    monkeypatch.setattr(sys, "argv", ["main.py", "--status"])
+    from main import main
+
+    main()
+    out = capsys.readouterr().out
+    assert "LLM: gemini (gemini-2.0-flash)" in out
+    assert "not configured" not in out
 
 
 def test_normalize_google_client_id_rejects_placeholder():

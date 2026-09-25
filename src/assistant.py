@@ -75,7 +75,8 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
             "the user says remind me, every morning, daily, or mentions "
             "automations. Local file only — no extra API key or cron account. "
             "While the localhost UI (--serve) is open, due jobs fire in the "
-            "background; otherwise use python main.py --run-due."
+            "background; otherwise use python main.py --run-due (reminders "
+            "need no AI key; run jobs use the same key as chat)."
         ),
         Tools=[AutomationTool(automations)],
         Model=model,

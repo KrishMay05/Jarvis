@@ -2,7 +2,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from src.agent import Agent
-from src.automation.runner import format_due_report, run_due_jobs
+from src.automation.runner import format_due_report, run_due_jobs, skipped_run_job_note
 from src.automation.schedule import ScheduleParseError, parse_schedule, strip_when_phrases
 from src.automation.store import (
     AutomationStore,
@@ -237,6 +237,69 @@ def test_main_lists_automations_without_api_key(tmp_path, monkeypatch, capsys):
 
     main()
     assert "No automations yet" in capsys.readouterr().out
+
+
+def test_skipped_run_job_note(tmp_path):
+    store = AutomationStore(tmp_path / "automations.json")
+    store.add(
+        kind="run",
+        title="news",
+        schedule=parse_schedule("in 1 minute", now=FIXED),
+        prompt="Research AI news",
+    )
+    assert skipped_run_job_note(store, now=FIXED) is None
+    note = skipped_run_job_note(store, now=FIXED + timedelta(minutes=2))
+    assert note is not None
+    assert "1 run job still due" in note
+    assert "needs an AI key" in note
+    assert store.jobs[0].id in note
+
+
+def test_main_run_due_fires_reminders_without_api_key(tmp_path, monkeypatch, capsys):
+    store = AutomationStore(tmp_path / "automations.json")
+    store.add(
+        kind="remind",
+        title="stretch",
+        schedule=parse_schedule("in 1 minute", now=FIXED),
+        message="stretch now",
+    )
+    monkeypatch.setattr(
+        "src.automation.runner.utc_now",
+        lambda: FIXED + timedelta(minutes=2),
+    )
+    monkeypatch.setattr(sys, "argv", ["main.py", "--run-due"])
+    from main import main
+
+    main()
+    out = capsys.readouterr().out
+    assert "stretch now" in out
+    later = AutomationStore(tmp_path / "automations.json")
+    assert later.jobs[0].last_result is not None
+    assert "stretch now" in later.jobs[0].last_result
+
+
+def test_main_run_due_reports_run_jobs_without_api_key(tmp_path, monkeypatch, capsys):
+    store = AutomationStore(tmp_path / "automations.json")
+    store.add(
+        kind="run",
+        title="news",
+        schedule=parse_schedule("in 1 minute", now=FIXED),
+        prompt="Research AI news",
+    )
+    monkeypatch.setattr(
+        "src.automation.runner.utc_now",
+        lambda: FIXED + timedelta(minutes=2),
+    )
+    monkeypatch.setattr(sys, "argv", ["main.py", "--run-due"])
+    from main import main
+
+    main()
+    out = capsys.readouterr().out
+    assert "1 run job still due" in out
+    assert "needs an AI key" in out
+    later = AutomationStore(tmp_path / "automations.json")
+    assert later.jobs[0].last_result is None
+    assert later.due_jobs(FIXED + timedelta(minutes=2))
 
 
 def test_status_line_empty_and_counts(tmp_path):

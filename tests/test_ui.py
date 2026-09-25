@@ -119,6 +119,9 @@ def test_status_without_key_is_not_ready():
     assert payload["setup"]["has_key"] is False
     assert payload["setup"]["has_profile"] is False
     assert payload["setup"]["can_complete"] is True
+    assert payload["runtime"] is not None
+    assert "LLM: not configured" in payload["runtime"]
+    assert "--run-due fires reminders without an AI key" in payload["runtime"]
 
 
 def test_status_with_settings_lists_llm():

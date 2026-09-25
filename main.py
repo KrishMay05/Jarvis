@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from src.assistant import build_orchestrator
 from src.auth.oauth import connect_google, disconnect_google
 from src.auth.store import AuthStore
-from src.automation.runner import format_due_report
+from src.automation.runner import format_due_report, run_due_jobs, skipped_run_job_note
 from src.automation.store import AutomationStore
 from src.config import MissingAPIKeyError, describe_runtime, get_llm_settings
 from src.tools.computer_tool import ComputerTool
@@ -29,7 +29,7 @@ def main() -> None:
     parser.add_argument(
         "--status",
         action="store_true",
-        help="Print the detected LLM provider and built-in tools, then exit",
+        help="Print LLM, tools, memory, automations, MCP, and auth (no API key needed)",
     )
     parser.add_argument(
         "--automations",
@@ -39,7 +39,7 @@ def main() -> None:
     parser.add_argument(
         "--run-due",
         action="store_true",
-        help="Fire due reminders and run-jobs, then exit (for system cron)",
+        help="Fire due reminders (no API key) and run-jobs (same AI key), then exit",
     )
     parser.add_argument(
         "--browse",
@@ -112,22 +112,23 @@ def main() -> None:
         _run_serve(args.host, args.port, args.open)
         return
 
+    if args.status and not args.run_due and not args.once:
+        print(describe_runtime())
+        return
+
+    if args.run_due and not args.once:
+        _run_due()
+        return
+
     try:
         settings = get_llm_settings()
     except MissingAPIKeyError as exc:
         print(exc, file=sys.stderr)
         sys.exit(1)
 
-    if args.status:
-        print(describe_runtime(settings))
-        return
-
     orchestrator = None
     try:
         orchestrator = build_orchestrator(settings)
-        if args.run_due:
-            print(format_due_report(orchestrator.drain_due_automations()))
-            return
         if args.once:
             for line in orchestrator.drain_due_automations():
                 print(line)
@@ -152,6 +153,32 @@ def main() -> None:
     finally:
         if orchestrator is not None:
             orchestrator.close()
+
+
+def _run_due() -> None:
+    """Fire due jobs. Reminders never need an AI key; run jobs reuse one if present."""
+    settings = None
+    try:
+        settings = get_llm_settings()
+    except MissingAPIKeyError:
+        settings = None
+
+    if settings is not None:
+        orchestrator = None
+        try:
+            orchestrator = build_orchestrator(settings)
+            print(format_due_report(orchestrator.drain_due_automations()))
+        finally:
+            if orchestrator is not None:
+                orchestrator.close()
+        return
+
+    store = AutomationStore()
+    reports = list(run_due_jobs(store, run_prompt=None))
+    skipped = skipped_run_job_note(store)
+    if skipped:
+        reports.append(skipped)
+    print(format_due_report(reports))
 
 
 def _run_connect(provider: str) -> None:

@@ -184,7 +184,12 @@ def list_llm_settings() -> list[LLMSettings]:
 
 
 def describe_runtime(settings: LLMSettings | None = None) -> str:
-    """Human-readable setup summary for --status and the REPL banner."""
+    """Human-readable setup summary for --status and the REPL banner.
+
+    Works without an API key so first-run users can confirm tools, MCP,
+    memory, automations, and auth before pasting a Gemini / OpenAI /
+    Anthropic key. No live model call either way.
+    """
     from src.auth.store import auth_status_line
     from src.automation.store import automation_status_line
     from src.mcp.config import mcp_status_line
@@ -194,22 +199,32 @@ def describe_runtime(settings: LLMSettings | None = None) -> str:
     try:
         configured = list_llm_settings()
     except MissingAPIKeyError:
-        if settings is None:
-            raise
-    settings = settings or configured[0]
-    fallbacks = [item for item in configured if item.provider != settings.provider]
-    fallback_line = ""
-    if fallbacks:
-        names = ", ".join(item.summary() for item in fallbacks)
-        fallback_line = (
-            f"\nFallback LLM: {names} "
-            "(optional extra key — used only if the primary provider fails)"
+        configured = []
+    settings = settings or (configured[0] if configured else None)
+    if settings is None:
+        llm_line = (
+            "LLM: not configured — paste a Gemini, OpenAI, or Anthropic key "
+            "in `python main.py --serve` or set GEMINI_API_KEY / OPENAI_API_KEY / "
+            "ANTHROPIC_API_KEY (no live model call needed for this status)"
         )
+    else:
+        fallbacks = [
+            item for item in configured if item.provider != settings.provider
+        ]
+        fallback_line = ""
+        if fallbacks:
+            names = ", ".join(item.summary() for item in fallbacks)
+            fallback_line = (
+                f"\nFallback LLM: {names} "
+                "(optional extra key — used only if the primary provider fails)"
+            )
+        llm_line = f"LLM: {settings.summary()}{fallback_line}"
     return (
-        f"LLM: {settings.summary()}{fallback_line}\n"
+        f"{llm_line}\n"
         "Tools: weather (wttr.in), time (local clock), "
         "research (Wikipedia + public web), chat (your LLM), "
-        "memory (local file), automations (local schedule; --serve fires them in the background), "
+        "memory (local file), automations (local schedule; --serve fires them in the background; "
+        "--run-due fires reminders without an AI key), "
         "computer (public web pages), mail/calendar (Google OAuth), "
         "web UI (localhost --serve; paste an AI key, optional backup key, or Google OAuth client ID, streaming chat, restored history, clear conversation, edit memory/automations/MCP, or Connect Google)\n"
         f"{mcp_status_line()}\n"
