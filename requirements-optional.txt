@@ -1,0 +1,3 @@
+# Optional extras — built-in tools still work without these.
+# JS-capable computer use / research fallback (no extra API key):
+playwright>=1.40.0

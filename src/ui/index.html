@@ -353,6 +353,7 @@
           <p id="backup-hint" class="meta">Optional. Used only if the primary LLM is down or rate-limited. Different provider than the primary. No .env edit.</p>
           <h2>Tools</h2>
           <div id="tools" class="tools"></div>
+          <p id="browser" class="meta"></p>
           <h2>Memory</h2>
           <p id="memory" class="meta"></p>
           <div id="memory-list" class="manage-list"></div>
@@ -578,6 +579,9 @@
           chip.textContent = name;
           tools.appendChild(chip);
         });
+        const browser = data.browser || {};
+        document.getElementById("browser").textContent = browser.summary
+          || "Computer use opens public pages. Optional Playwright renders JS-heavy sites — still no extra API key.";
         if (!log.childElementCount && !(data.setup && data.setup.show)) {
           if (ready) {
             add("At your service. Weather, research, memory, automations, computer use, mail, calendar, and MCP — one AI key. Replies stream here as I work. Refresh to restore this conversation from local memory. Clear conversation for a fresh thread — remembered facts stay. Remember facts, schedule reminders, and connect MCP servers in the sidebar without chatting. Reminders fire here while the page is open. Optionally paste a second AI key as a backup if the first provider fails. Paste a Google OAuth client ID in the sidebar, then Connect Google when you want inbox, full email bodies, and today's calendar.", "jarvis");

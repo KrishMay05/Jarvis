@@ -192,6 +192,7 @@ def describe_runtime(settings: LLMSettings | None = None) -> str:
     """
     from src.auth.store import auth_status_line
     from src.automation.store import automation_status_line
+    from src.computer.engine import browser_status_line
     from src.mcp.config import mcp_status_line
     from src.memory.store import memory_status_line
 
@@ -225,12 +226,14 @@ def describe_runtime(settings: LLMSettings | None = None) -> str:
         "research (Wikipedia + public web), chat (your LLM), "
         "memory (local file), automations (local schedule; --serve fires them in the background; "
         "--run-due fires reminders without an AI key), "
-        "computer (public web pages), mail/calendar (Google OAuth), "
+        "computer (public web pages; optional Playwright for JS-heavy sites), "
+        "mail/calendar (Google OAuth), "
         "web UI (localhost --serve; paste an AI key, optional backup key, or Google OAuth client ID, streaming chat, restored history, clear conversation, edit memory/automations/MCP, or Connect Google)\n"
         f"{mcp_status_line()}\n"
         f"{memory_status_line()}\n"
         f"{automation_status_line()}\n"
         f"{auth_status_line()}\n"
+        f"{browser_status_line()}\n"
         "Extra API keys: none required for built-in tools"
     )
 

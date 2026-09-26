@@ -11,7 +11,8 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import requests
 
-from src.computer.browse import UnsafeURLError, fetch_page
+from src.computer.browse import UnsafeURLError
+from src.computer.engine import open_public_page
 from src.config import USER_AGENT
 from src.tools.base_tool import Tool
 
@@ -354,7 +355,7 @@ class ResearchTool(Tool):
 
     def _fetch_public_page(self, url: str):
         try:
-            return fetch_page(url, session=self.session)
+            return open_public_page(url, session=self.session)
         except UnsafeURLError:
             return None
 

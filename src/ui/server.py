@@ -53,6 +53,7 @@ from src.mcp.config import (
     set_mcp_server_disabled,
     upsert_mcp_server,
 )
+from src.computer.engine import browser_status
 from src.memory.store import MemoryStore, memory_status_line
 from src.setup.store import (
     SetupProfileError,
@@ -252,6 +253,7 @@ class JarvisWebApp:
             "google": self._google_status(),
             "mcp": mcp_status_line(),
             "mcp_servers": self._mcp_payload()["servers"],
+            "browser": browser_status(),
             "bind": "localhost only — not exposed on your LAN",
             "can_install_key": self._accepts_key_install(),
             "can_install_backup": self._accepts_key_install() and self.ready,
