@@ -91,6 +91,8 @@ def test_index_is_self_contained_html():
     assert "Add server" in html
     assert "Reload MCP" in html
     assert "Forget" in html
+    assert 'id="browser"' in html
+    assert "Playwright" in html
     assert "http://" not in html.split("<style>")[1].split("</style>")[0]
 
 
@@ -118,6 +120,9 @@ def test_status_without_key_is_not_ready():
     assert payload["setup"]["show"] is True
     assert payload["setup"]["has_key"] is False
     assert payload["setup"]["has_profile"] is False
+    assert payload["browser"]["mode"] in {"auto", "http", "playwright"}
+    assert payload["browser"]["backend"] in {"http", "playwright", "playwright-unavailable"}
+    assert "summary" in payload["browser"]
     assert payload["setup"]["can_complete"] is True
     assert payload["runtime"] is not None
     assert "LLM: not configured" in payload["runtime"]
@@ -251,6 +256,7 @@ def test_describe_runtime_mentions_web_ui(monkeypatch):
     assert "clear conversation" in text
     assert "memory/automations/MCP" in text
     assert "Connect Google" in text
+    assert "Playwright" in text
 
 
 def test_connect_google_requires_client_id():

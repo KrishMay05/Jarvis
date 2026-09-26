@@ -10,28 +10,39 @@ import requests
 from src.computer.browse import (
     Page,
     UnsafeURLError,
-    fetch_page,
     normalize_url,
 )
+from src.computer.engine import OpenPage, open_public_page
 from src.config import USER_AGENT
 
 
 class BrowserSession:
-    """One REPL-wide public-web tab. No extra API key, no headless browser."""
+    """One REPL-wide public-web tab. No extra API key.
+
+    HTTP is the default. JS-heavy pages retry with Playwright when that
+    package is installed locally — still no Browserbase or vendor account.
+    """
 
     def __init__(
         self,
         session: requests.Session | None = None,
         resolver: Callable | None = None,
+        playwright_fetch: OpenPage | None = None,
     ):
         self.http = session or requests.Session()
         self.http.headers.setdefault("User-Agent", USER_AGENT)
         self.resolver = resolver or socket.getaddrinfo
+        self.playwright_fetch = playwright_fetch
         self.last_page: Page | None = None
 
     def open(self, url: str) -> str:
         try:
-            page = fetch_page(url, session=self.http, resolver=self.resolver)
+            page = open_public_page(
+                url,
+                session=self.http,
+                resolver=self.resolver,
+                playwright_fetch=self.playwright_fetch,
+            )
         except UnsafeURLError as exc:
             return str(exc)
         self.last_page = page

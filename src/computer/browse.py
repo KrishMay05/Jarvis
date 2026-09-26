@@ -64,7 +64,16 @@ Resolver = Callable[..., list]
 
 
 class UnsafeURLError(ValueError):
-    """Raised when a URL is not a public http(s) page Jarvis should open."""
+    """Raised when a URL is not a public http(s) page Jarvis should open.
+
+    ``retryable`` is True only for network failures. Policy blocks
+    (localhost, private IPs, credentials, non-http) stay False so a
+    JS-capable fallback never retries an unsafe target.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
 
 
 @dataclass
@@ -150,7 +159,10 @@ def fetch_page(
             return _page_from_response(response, current)
         raise UnsafeURLError("Too many redirects while opening that page.")
     except requests.exceptions.RequestException as exc:
-        raise UnsafeURLError(f"Could not open that page: {exc}") from exc
+        raise UnsafeURLError(
+            f"Could not open that page: {exc}",
+            retryable=True,
+        ) from exc
     finally:
         if response is not None:
             response.close()

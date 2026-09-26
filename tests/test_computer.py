@@ -4,11 +4,18 @@ import pytest
 import requests
 
 from src.computer.browse import (
+    Page,
     UnsafeURLError,
     assert_public_url,
     extract_readable,
     fetch_page,
     normalize_url,
+)
+from src.computer.engine import (
+    browser_mode,
+    browser_status,
+    looks_like_js_shell,
+    open_public_page,
 )
 from src.computer.session import BrowserSession
 from src.tools.computer_tool import ComputerTool
@@ -226,6 +233,232 @@ def test_computer_tool_sets_user_agent():
     session.headers = {}
     ComputerTool(BrowserSession(session=session, resolver=public_resolver))
     assert "JarvisPersonalAssistant" in session.headers["User-Agent"]
+
+
+JS_SHELL_HTML = """
+<html>
+  <head><title>App</title></head>
+  <body>
+    <p>Please enable JavaScript to continue.</p>
+    <div id="root"></div>
+  </body>
+</html>
+"""
+
+
+def test_looks_like_js_shell_for_thin_or_noscript_pages():
+    empty = Page(url="https://example.com", title="App", text="Loading…")
+    short_real = Page(
+        url="https://example.com",
+        title="Example Domain",
+        text="This domain is for use in illustrative examples in documents.",
+    )
+    shell = Page(
+        url="https://app.example",
+        title="Dashboard",
+        text="Please enable JavaScript to continue. " + ("x" * 220),
+    )
+    assert looks_like_js_shell(empty) is True
+    assert looks_like_js_shell(short_real) is False
+    assert looks_like_js_shell(shell) is True
+
+
+def test_browser_mode_reads_env(monkeypatch):
+    monkeypatch.delenv("JARVIS_BROWSER", raising=False)
+    assert browser_mode() == "auto"
+    monkeypatch.setenv("JARVIS_BROWSER", "playwright")
+    assert browser_mode() == "playwright"
+    monkeypatch.setenv("JARVIS_BROWSER", "nope")
+    assert browser_mode() == "auto"
+
+
+def test_open_public_page_keeps_rich_http_without_playwright(monkeypatch):
+    session = Mock()
+    session.headers = {}
+    session.get.return_value = html_response(SAMPLE_HTML, url="https://example.com/")
+    called = []
+
+    def boom(url, resolver=None):
+        called.append(url)
+        raise AssertionError("Playwright should not run for rich HTTP")
+
+    page = open_public_page(
+        "https://example.com/",
+        session=session,
+        resolver=public_resolver,
+        playwright_fetch=boom,
+        playwright_ready=True,
+    )
+    assert page.title == "Example Domain"
+    assert called == []
+
+
+def test_open_public_page_retries_playwright_on_js_shell(monkeypatch):
+    session = Mock()
+    session.headers = {}
+    session.get.return_value = html_response(JS_SHELL_HTML, url="https://app.example/")
+    rendered = Page(
+        url="https://app.example/",
+        title="Dashboard",
+        text="Welcome back. Here is the rendered inbox and calendar. " * 3,
+        links=[("Inbox", "https://app.example/inbox")],
+    )
+
+    def fake_playwright(url, resolver=None):
+        assert "app.example" in url
+        return rendered
+
+    page = open_public_page(
+        "https://app.example/",
+        session=session,
+        resolver=public_resolver,
+        playwright_fetch=fake_playwright,
+        playwright_ready=True,
+    )
+    assert page.title == "Dashboard"
+    assert "rendered inbox" in page.text
+
+
+def test_open_public_page_retries_playwright_after_http_timeout():
+    session = Mock()
+    session.headers = {}
+    session.get.side_effect = requests.exceptions.Timeout("timed out")
+    rendered = Page(
+        url="https://app.example/",
+        title="Recovered",
+        text="Rendered after the static fetch timed out. " * 3,
+    )
+
+    page = open_public_page(
+        "https://app.example/",
+        session=session,
+        resolver=public_resolver,
+        playwright_fetch=lambda url, resolver=None: rendered,
+        playwright_ready=True,
+    )
+    assert page.title == "Recovered"
+
+
+def test_open_public_page_does_not_send_private_urls_to_playwright():
+    session = Mock()
+    session.headers = {}
+    called = []
+
+    def boom(url, resolver=None):
+        called.append(url)
+        raise AssertionError("private hosts must not reach Playwright")
+
+    with pytest.raises(UnsafeURLError, match="not allowed"):
+        open_public_page(
+            "http://127.0.0.1/secret",
+            session=session,
+            resolver=public_resolver,
+            playwright_fetch=boom,
+            playwright_ready=True,
+        )
+    session.get.assert_not_called()
+    assert called == []
+
+
+def test_open_public_page_falls_back_when_playwright_missing(monkeypatch):
+    session = Mock()
+    session.headers = {}
+    session.get.return_value = html_response(JS_SHELL_HTML, url="https://app.example/")
+
+    page = open_public_page(
+        "https://app.example/",
+        session=session,
+        resolver=public_resolver,
+        playwright_ready=False,
+    )
+    assert "enable JavaScript" in page.text
+
+
+def test_open_public_page_http_mode_skips_playwright(monkeypatch):
+    monkeypatch.setenv("JARVIS_BROWSER", "http")
+    session = Mock()
+    session.headers = {}
+    session.get.return_value = html_response(JS_SHELL_HTML, url="https://app.example/")
+    called = []
+
+    def boom(url, resolver=None):
+        called.append(url)
+        return Page(url=url, title="Nope", text="should not run")
+
+    page = open_public_page(
+        "https://app.example/",
+        session=session,
+        resolver=public_resolver,
+        playwright_fetch=boom,
+        playwright_ready=True,
+    )
+    assert "enable JavaScript" in page.text
+    assert called == []
+
+
+def test_open_public_page_playwright_mode_skips_http(monkeypatch):
+    monkeypatch.setenv("JARVIS_BROWSER", "playwright")
+    session = Mock()
+    session.headers = {}
+    rendered = Page(
+        url="https://app.example/",
+        title="Rendered",
+        text="Full article from the local browser. " * 4,
+    )
+
+    page = open_public_page(
+        "https://app.example/",
+        session=session,
+        resolver=public_resolver,
+        playwright_fetch=lambda url, resolver=None: rendered,
+        playwright_ready=True,
+    )
+    assert page.title == "Rendered"
+    session.get.assert_not_called()
+
+
+def test_fetch_page_playwright_blocks_localhost_before_launch(monkeypatch):
+    from src.computer import playwright_fetch as pw
+
+    monkeypatch.setattr(pw, "_ensure_browser", lambda: (_ for _ in ()).throw(AssertionError("launch")))
+    with pytest.raises(UnsafeURLError, match="not allowed"):
+        pw.fetch_page_playwright("http://127.0.0.1/", resolver=public_resolver)
+
+
+def test_browser_status_reports_http_when_playwright_missing(monkeypatch):
+    monkeypatch.delenv("JARVIS_BROWSER", raising=False)
+    monkeypatch.setattr(
+        "src.computer.engine.playwright_available",
+        lambda: False,
+    )
+    status = browser_status()
+    assert status["backend"] == "http"
+    assert status["playwright"] is False
+    assert "playwright" in status["summary"].lower()
+
+
+def test_browser_session_uses_playwright_for_js_shell():
+    session = Mock()
+    session.headers = {}
+    session.get.return_value = html_response(JS_SHELL_HTML, url="https://app.example/")
+    rendered = Page(
+        url="https://app.example/",
+        title="Inbox",
+        text="You have three unread messages from Ada. " * 3,
+    )
+    browser = BrowserSession(
+        session=session,
+        resolver=public_resolver,
+        playwright_fetch=lambda url, resolver=None: rendered,
+    )
+    opened = browser.open("https://app.example/")
+    assert "unread messages" in opened
+
+
+def test_computer_tool_mentions_playwright():
+    text = ComputerTool().description().lower()
+    assert "playwright" in text
+    assert "no extra api key" in text
 
 
 def test_main_browse_without_api_key(monkeypatch, capsys):

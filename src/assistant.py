@@ -88,8 +88,9 @@ def build_orchestrator(settings: LLMSettings | None = None) -> AgentOrchestrator
             "Computer use: opens public web pages, reads the visible text, "
             "lists links, and follows a link from the last page. Use when "
             "the user pastes a URL, says open/browse/go to a site, asks "
-            "what is on a page, or wants to click a link. Local HTTP only "
-            "— no extra API key. Not for encyclopedic research without a URL."
+            "what is on a page, or wants to click a link. Local fetch — "
+            "no extra API key. JS-heavy sites retry with Playwright when "
+            "installed. Not for encyclopedic research without a URL."
         ),
         Tools=[ComputerTool()],
         Model=model,

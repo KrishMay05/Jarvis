@@ -80,7 +80,7 @@ Type `exit`, `bye`, or `close` to leave the REPL.
 | Research | Wikipedia, named public sites, DuckDuckGo, then Stack Overflow (no extra key) |
 | Memory | Local `~/.jarvis/memory.json` — remember facts across sessions; inspect or forget them in the web UI; the chat log restores on refresh and can be cleared without deleting facts (no extra key) |
 | Automations | Local `~/.jarvis/automations.json` — reminders and recurring prompts; `--serve` fires them in the background, `--run-due` fires reminders without an AI key, and the sidebar can add/pause/cancel jobs (no extra key) |
-| Computer use | Open public http(s) pages, read the text, follow on-page links (no extra key) |
+| Computer use | Open public http(s) pages, read the text, follow on-page links; JS-heavy sites retry with optional local Playwright (no extra key) |
 | Mail | Gmail inbox/search and full message bodies after Connect Google in the web UI or `python main.py --connect google` (OAuth, not an AI key) |
 | Calendar | Today's / tomorrow's / this week's Google Calendar agenda after the same Google login |
 | MCP tools | Local stdio servers from `mcp.json` or the localhost UI MCP editor (no extra AI key) |
@@ -151,16 +151,19 @@ If every source misses, Jarvis says so instead of inventing a citation.
 
 ## Computer use
 
-Jarvis can operate a **local public-web browser** with the same AI key — no Playwright account, Browserbase, or extra vendor.
+Jarvis can operate a **local public-web browser** with the same AI key — no Browserbase or extra vendor.
 
 - Say **open https://example.com**, **browse python.org**, **what's on this page**, or **follow the Docs link**
 - The Computer Agent fetches the page, strips scripts/styles, and returns readable text plus top links
 - Follow-up **follow** / **click** uses links from the last opened page in this process
 - `python main.py --browse https://example.com` reads a page without an API key
 - Only public `http`/`https` URLs are allowed. Localhost, private LAN, and cloud-metadata addresses are blocked
-- JavaScript-heavy apps may return little text; encyclopedic questions without a URL still go to the Research Agent, which can also fall back to a public web search
+- Static HTTP is the default. If a page looks like a JS-only shell, Jarvis retries with **Playwright** when Chromium is installed locally (`pip install playwright` && `playwright install chromium`). Still no extra API key
+- Set `JARVIS_BROWSER=http` to stay on static fetch, or `JARVIS_BROWSER=playwright` to always render
+- `--status` and the localhost UI Tools sidebar show whether Playwright is ready
+- Encyclopedic questions without a URL still go to the Research Agent, which uses the same public-page opener for named sites
 
-No extra vendor account. This is the first computer-use layer; desktop mouse/keyboard control can come later.
+No extra vendor account. Desktop mouse/keyboard control can come later.
 
 ## Mail and calendar (connect via auth)
 
@@ -245,7 +248,7 @@ Set `JARVIS_DEBUG=1` to print LLM prompts while iterating.
 - `src/assistant.py` — default weather, time, research, memory, automation, computer, mail, calendar, chat, and optional MCP agents
 - `src/auth/` — local OAuth token store and Google mail/calendar clients
 - `src/automation/` — local job store, schedule parser, and due-job runner
-- `src/computer/` — public-web fetch, HTML extract, and in-process link following
+- `src/computer/` — public-web fetch, HTML extract, optional Playwright for JS-heavy sites, and in-process link following
 - `src/config.py` — one-key provider detection (extra keys are optional LLM backups)
 - `src/llm.py` — Gemini / OpenAI / Anthropic client with automatic provider failover and streaming
 - `src/mcp/` — stdio MCP client, `mcp.json` loader, and localhost UI save/reload
@@ -283,5 +286,6 @@ These are the next layers toward a drop-in assistant that also handles auth, aut
 21. ~~Paste an optional backup LLM key from the localhost UI~~ (different provider than the primary; failover only; no `.env` edit, no restart)
 22. ~~First-run setup wizard in the localhost UI~~ (one AI key plus optional name / home city / units; skip anytime; no extra vendor)
 23. ~~`--status` and reminder `--run-due` without an AI key~~ (CLI matches the UI; cron reminders need no model)
-24. Desktop / JS-capable computer use (Playwright or screenshot+input)
+24. ~~JS-capable computer use (optional Playwright when HTTP is thin)~~ (local Chromium; still one AI key)
 25. Microsoft / Outlook OAuth using the same auth store
+26. Desktop mouse/keyboard computer use

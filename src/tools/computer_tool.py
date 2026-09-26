@@ -24,9 +24,10 @@ class ComputerTool(Tool):
     def description(self) -> str:
         return (
             "Computer use: open a public http(s) URL, read the page text, "
-            "list links, or follow a link from the last page. Local HTTP only "
-            "— no extra API key, no Playwright. "
-            "Args: open https://example.com; follow Docs; links."
+            "list links, or follow a link from the last page. Local fetch — "
+            "no extra API key. JS-heavy sites retry with Playwright when it "
+            "is installed (`pip install playwright` + `playwright install "
+            "chromium`). Args: open https://example.com; follow Docs; links."
         )
 
     def use(self, args) -> str:

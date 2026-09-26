@@ -301,6 +301,12 @@ class AgentOrchestrator:
                 closer()
             except Exception:
                 pass
+        try:
+            from src.computer.playwright_fetch import close_playwright
+
+            close_playwright()
+        except Exception:
+            pass
 
 
 def _has_followup(decision: dict) -> bool:

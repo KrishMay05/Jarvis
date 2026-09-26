@@ -131,6 +131,8 @@ def test_describe_runtime_mentions_one_key_tools(monkeypatch):
     assert "Memory:" in text
     assert "Automations:" in text
     assert "Auth:" in text
+    assert "Browser:" in text
+    assert "Playwright" in text
 
 
 def test_list_llm_settings_one_key_is_enough(monkeypatch):
@@ -311,6 +313,7 @@ def test_describe_runtime_without_api_key(monkeypatch):
     assert "Memory:" in text
     assert "Automations:" in text
     assert "Auth:" in text
+    assert "Browser:" in text
     assert "none required" in text.lower()
 
 
